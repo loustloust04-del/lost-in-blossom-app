@@ -199,6 +199,9 @@ struct ContentView: View {
             if let url = URL(string: APIProvider.ccBridge.baseURL) {
                 CCBridgeWebSocketClient.shared.connect(url: url)
             }
+            // 09-16 兔兔：开屏是一个空白聊天框（不是问候页）——开口说话它才变成真对话进侧栏，
+            // 右滑侧栏照旧挑以前的
+            openBlankDraftIfNeeded()
             manager.syncSystemColorScheme(colorScheme)
             let top = screenSafeAreaTop
             if top > 0 { topSafeAreaInset = top }
@@ -674,6 +677,25 @@ struct ContentView: View {
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.sidebarBg.ignoresSafeArea())
+    }
+
+    /// 启动时给她一个空白聊天框：复用已有的空白草稿（没说话的那条），没有就新建一条。
+    /// 草稿在侧栏里是隐藏的（见 SidebarView fetchPage 过滤），发出第一条消息后自动现身。
+    private func openBlankDraftIfNeeded() {
+        guard viewModel.selectedConversation == nil else { return }
+        let pid = profileManager?.currentProfile.id ?? ""
+        guard !pid.isEmpty else { return }
+        let d = FetchDescriptor<Conversation>(
+            predicate: #Predicate { $0.profileId == pid && $0.isTrashed == false && $0.kind != "group" },
+            sortBy: [SortDescriptor(\.updateTime, order: .reverse)]
+        )
+        let recent = (try? modelContext.fetch(d))?.prefix(12) ?? []
+        if let draft = recent.first(where: { ConversationListStore.isBlankDraft($0, context: modelContext) }) {
+            viewModel.loadConversation(draft, context: modelContext)
+            return
+        }
+        let conv = viewModel.createNewConversation(title: "新对话", profileId: pid, context: modelContext)
+        viewModel.loadConversation(conv, context: modelContext)
     }
 
     private var iOSChatPage: some View {

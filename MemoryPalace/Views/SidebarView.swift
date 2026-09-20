@@ -1650,10 +1650,15 @@ struct SidebarView: View {
         )
 
         totalCount = page.totalCount
+        // 空白草稿（还没说过话的那条）不进列表——开口后自动现身。当前正打开的那条永远保留，
+        // 免得她正在里面打字却从列表里消失（09-16 兔兔要的「空白开屏」）
+        let visible = page.conversations.filter {
+            $0.id == viewModel.selectedConversation?.id || !ConversationListStore.isBlankDraft($0, context: modelContext)
+        }
         if offset == 0 {
-            conversations = page.conversations
+            conversations = visible
         } else {
-            conversations.append(contentsOf: page.conversations)
+            conversations.append(contentsOf: visible)
         }
         isLoadingMore = false
     }

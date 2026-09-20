@@ -2,6 +2,9 @@ import Foundation
 
 // MARK: - CC Bridge Provider
 
+/// 本轮回复里主人带的非图片文件：Provider 只有 onComplete(String) 一条出口，字节从这里带给 VM 收口
+extension CCBridgeProvider { static var lastReplyFile: PendingChatAttachment? = nil }
+
 final class CCBridgeProvider: BaseChatProvider {
     @ObservationIgnored private let wsClient = CCBridgeWebSocketClient.shared
     /// 当前 in-flight 请求的 grace timer，等 reply 最长 60s；
@@ -56,6 +59,7 @@ final class CCBridgeProvider: BaseChatProvider {
         // 4. 先注册 reply handler（即便 WS 还没连上也无妨，dict 里等 reply 到达再触发）
         // 4a. 注册附件 handler：CC回复带文件时暂存，replyHandler里一并处理
         var pendingAttachment: PendingChatAttachment?
+        CCBridgeProvider.lastReplyFile = nil
         wsClient.registerReplyAttachmentHandler(chatId: chatId) { att in
             pendingAttachment = att
         }
@@ -92,7 +96,8 @@ final class CCBridgeProvider: BaseChatProvider {
                         return
                     }
                 } else {
-                    // 非图片文件：在内容末尾附上文件名
+                    // 非图片文件：字节交给 VM 收口时挂成 fileData 段（09-20 之前只剩个名字）
+                    CCBridgeProvider.lastReplyFile = att
                     let withFile = contentToSave + "\n\n📎 \(att.name)"
                     self.streamingContent = withFile
                     onComplete(withFile, nil)

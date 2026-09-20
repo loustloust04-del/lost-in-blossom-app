@@ -2645,6 +2645,19 @@ struct BubbleView: View {
                     }
                 }
 
+                // 主人发来的图/文件（.image / .fileData 段）：文章模式原来只在气泡模式画附件条，
+                // 这里补上——不然他 reply(file_path:) 发的文件只剩一行「📎 名字」（兔兔 09-20）
+                if !chatBubbleMode, let segs = node.segments?.hydratedForDisplay(profileId: node.profileId) {
+                    let items: [BubbleAttachmentItem] = segs.compactMap { seg in
+                        if case .image(let n, _, let d) = seg { return .image(name: n, data: d) }
+                        if case .fileData(let n, let m, let d) = seg { return .fileData(name: n, mime: m, data: d) }
+                        return nil
+                    }
+                    if !items.isEmpty {
+                        BubbleAttachmentStrip(items: items, isUser: isUser)
+                            .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+                    }
+                }
                 // Artifact canvas card (assistant only, not during streaming)
                 // 语音条胶囊（audioRef 不进 segments 渲染，这里单独画）
                 // D4：气泡模式下语音已在 BubbleModeRow 里一条一泡，外侧胶囊不再画

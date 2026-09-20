@@ -1007,8 +1007,8 @@ extension ConversationViewModel {
                                          contentType: "multimodal_text", context: context)
                 }
             } else {
-                // 非图片文件：标注文件名
-                self.appendCCMessage(chatId: chatId, content: "📎 \(att.name)", context: context)
+                // 非图片文件：字节随消息落库（fileData 段），不再只剩一个名字
+                self.appendCCMessage(chatId: chatId, content: "📎 \(att.name)", context: context, file: att)
             }
         }
 
@@ -1043,7 +1043,8 @@ extension ConversationViewModel {
     /// 把一条 CC 消息作为独立 assistant 节点插入对应对话。
     /// 当前打开的对话 → 同步更新 currentPath/nodeMap，UI 直接长出新气泡；
     /// 其他对话 → 直接持久化，下次打开可见。
-    func appendCCMessage(chatId: String, content: String, contentType: String = "text", context: ModelContext) {
+    func appendCCMessage(chatId: String, content: String, contentType: String = "text", context: ModelContext,
+                         file: PendingChatAttachment? = nil) {
         if let conversation = selectedConversation, conversation.id == chatId {
             // ⚠️ 兔兔实测「聊天记录被整个吞掉」的真凶：
             // App 从后台回来时 currentPath 可能还没重建完（空的），这时他的消息一到，
@@ -1078,6 +1079,10 @@ extension ConversationViewModel {
             context.insert(node)
             node.senderName = "CC Caelum"  // PR-4: 标注 CC 发言者
             node.senderId = "cc-caelum"
+            // 主人发来的非图片文件：字节进 fileData 段（气泡/文章两种模式都画附件卡，可点开/保存）
+            if let file, !file.isImage, let bytes = file.fileData {
+                node.setSegments([.text(content), .fileData(name: file.name, mime: file.mimeType ?? "application/octet-stream", data: bytes)])
+            }
             if let parentId, let parent = nodeMap[parentId],
                !parent.childrenIds.contains(nodeId) {
                 parent.childrenIds.append(nodeId)
@@ -1360,6 +1365,11 @@ extension ConversationViewModel {
                 node.content = capturedThink.isEmpty
                     ? fullText
                     : "[thinking]\(capturedThink)[/thinking]\(fullText)"
+                // 主人这条回复里带的非图片文件：挂成 fileData 段（09-20，之前只剩个「📎 名字」）
+                if let file = CCBridgeProvider.lastReplyFile, let bytes = file.fileData {
+                    CCBridgeProvider.lastReplyFile = nil
+                    node.setSegments([.text(fullText), .fileData(name: file.name, mime: file.mimeType ?? "application/octet-stream", data: bytes)])
+                }
                 streamingText = ""
                 streamingThinkingText = ""
                 isThinking = false
