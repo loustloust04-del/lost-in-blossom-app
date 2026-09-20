@@ -113,28 +113,6 @@ struct IOSDebugPage: View {
             }
             .listRowBackground(Theme.mainBg)
 
-            // 深翻基准：机器定速滚 20s，出一份数字（对照粟粟 ChatPerfBench）
-            Section {
-                ForEach([3000.0, 8000.0], id: \.self) { sp in
-                    Button(action: {
-                        NotificationCenter.default.post(name: ChatScrollBench.startNotification, object: nil, userInfo: ["speed": sp])
-                        stressNotice = "回到聊天页，半秒后开滚；20 秒后看面包屑 📊"
-                    }) {
-                        Text("深翻基准（\(Int(sp))pt/s × 20s）")
-                            .font(.system(size: Theme.F.body))
-                            .foregroundColor(Theme.textPrimary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            } header: {
-                Text("深翻基准")
-            } footer: {
-                Text("先打开一条长对话（压力对话 800 条最好），再来按这里，然后马上切回聊天页别碰屏幕。3000 ≈ 真人快速上滑；8000 是粟粟对齐 lody 的口径。结果在面包屑 📊，全量帧间隔在 Documents/perf-bench.json。每刀前后各跑一次。")
-                    .font(.caption2)
-                    .foregroundColor(Theme.textMuted)
-            }
-            .listRowBackground(Theme.mainBg)
-
             // 压力对话：给白屏/卡顿一个随时能复现的靶子（配面包屑 📉 掉帧探针）
             Section {
                 ForEach([300, 800, 1500], id: \.self) { n in

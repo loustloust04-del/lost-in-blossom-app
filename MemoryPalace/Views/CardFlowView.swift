@@ -553,16 +553,6 @@ struct CardFlowView: View {
                     // defaultScrollAnchor(.sizeChanges) 只认 content size 不认视口变化 →
                     // 打字时原本贴底的内容被键盘顶乱（真机 bug："打着字白屏，要手动下滑找"）。
                     // 在底才滚，不打扰上滑读历史。
-                    .onReceive(NotificationCenter.default.publisher(for: ChatScrollBench.startNotification)) { note in
-                        // 深翻基准：开发调试页按一下，回到这条对话的底部后自动开滚
-                        guard let sv = scrollHost.scrollView else { return }
-                        let speed = (note.userInfo?["speed"] as? Double) ?? 3000
-                        scrollHost.pinToBottom()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                            FrameHitchProbe.mark("深翻基准")
-                            ChatScrollBench.shared.start(on: sv, speed: speed)
-                        }
-                    }
                     .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { note in
                         // [keyboard-ride] 在底才跟：内容和键盘同曲线一起升；上滑读历史的不动
                         wasAtBottomBeforeKeyboard = isAtBottom

@@ -42,29 +42,12 @@ final class VoIPCallService: NSObject {
     private var ringWatch: Timer?
     static let defaultHandle = "caelum@amberrib.com"
 
-    /// 来电界面底下那行小字用的名字。
-    /// 跟推送标题同源——读当前楼层的 assistantName，不写死
-    /// （09-09 推送标题写死成 Caelum，兔兔当场指出她有多个楼层，同一个错不犯第二次）。
-    private var callerDisplayName: String {
-        let n = UserDefaults.standard.string(forKey: "assistantName") ?? ""
-        return n.isEmpty ? "Caelum" : n
-    }
-
     // MARK: - 启动
 
     /// didFinishLaunching 里调。PushKit 必须在启动时就注册，否则 App 被杀时收不到 VoIP 推送。
     func start() {
         guard registry == nil else { return }
-        // 09-19 兔兔：来电界面大字已经是「Caelum」（服务端 caller 字段给的），
-        // 但底下那行小字取的是 app 名 —— 显示成「Lost in Blossom 语音通话」。
-        // 给了 localizedName 就只改这行，桌面上的 app 名不受影响
-        // （她用大图标模式，桌面根本不显示名字，没必要为此改 PRODUCT_NAME）。
-        //
-        // ⚠️ localizedName 是 get-only，只能走 init(localizedName:) 这个构造函数传，
-        // 不能 config.localizedName = ... —— 那样编译直接报
-        // 'cannot assign to property: localizedName is a get-only property'。
-        // 无参 init() 是 iOS 14 才加的，带名字这个老构造函数一直都在。
-        let config = CXProviderConfiguration(localizedName: callerDisplayName)
+        let config = CXProviderConfiguration()
         config.supportsVideo = false
         config.maximumCallGroups = 1
         config.maximumCallsPerCallGroup = 1
