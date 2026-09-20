@@ -67,19 +67,6 @@ enum ConversationListStore {
         }
     }
 
-    /// 空白草稿对话：一条真消息都没有的（只有 root system 节点）。
-    /// 09-16 兔兔要的「开屏是空白聊天框」：这种对话不进侧栏列表，开口说话后才现身。
-    static func isBlankDraft(_ conversation: Conversation, context: ModelContext) -> Bool {
-        let cid = conversation.id
-        var d = FetchDescriptor<MessageNode>(
-            predicate: #Predicate<MessageNode> { node in
-                node.conversationId == cid && node.role != "system" && node.isTrashed == false
-            }
-        )
-        d.fetchLimit = 1
-        return ((try? context.fetch(d))?.isEmpty ?? true)
-    }
-
     /// 回收站里的消息节点（带所属对话标题），按删除时间倒序
     static func deletedNodes(profileId: String, context: ModelContext) -> [(node: MessageNode, convTitle: String)] {
         let pid = profileId
