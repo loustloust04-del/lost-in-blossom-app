@@ -1,0 +1,68 @@
+# 纯编译验证：不签名、不打包、不部署，零 secrets 依赖。
+# 用途：在没有签名密钥的镜像仓库（caelumbunny-bot）上对功能分支做编译检查，
+# 不会触碰 OTA 安装通道（build-ios.yml 的 Deploy 步骤没有分支条件，
+# 在真仓库对分支跑 dispatch 会把用户手上的正式包顶掉——所以才需要这个）。
+name: Compile Check
+
+on:
+  workflow_dispatch:
+  # push 触发不依赖默认分支注册（dispatch 依赖），镜像仓库的功能分支推送即编译
+  push:
+    branches: ['main', 'claude/**', 'feat/**', 'fix/**']
+    paths-ignore: ['docs/**', '*.md', '.gitignore', 'cc-bridge/**', 'gateway/**', 'mcp-bridge/**', 'design/**']
+
+jobs:
+  compile:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Xcode version
+        run: xcodebuild -version
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Resolve packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -project MemoryPalace.xcodeproj \
+            -scheme MemoryPalaceIOS
+
+      - name: Build (unsigned)
+        run: |
+          set +e
+          xcodebuild build \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -project MemoryPalace.xcodeproj \
+            -scheme MemoryPalaceIOS \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            2>&1 | tee /tmp/build.log > /dev/null
+          status=${PIPESTATUS[0]}
+          echo "===== error: lines ====="
+          grep -nE "error:" /tmp/build.log | head -80 || echo "(no error: lines)"
+          echo "===== last 40 lines ====="
+          tail -40 /tmp/build.log
+          grep -nE "error:" /tmp/build.log > /tmp/errors.txt || echo "(no error: lines)" > /tmp/errors.txt
+          cp /tmp/build.log ./build.log; cp /tmp/errors.txt ./errors.txt
+          exit $status
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: |
+            errors.txt
+            build.log
+          retention-days: 3

@@ -1,0 +1,220 @@
+name: Build iOS
+
+on:
+  workflow_dispatch:
+  push:
+    # b/** = B 计划试验分支（2026-09-12）：同一套签名出包，但部署到独立通道 /dl/b/，
+    # 正式包 /dl/install 一根毛不动。分支上的 push 用的是分支自己这份 workflow。
+    branches: [main, 'b/**']
+    paths-ignore: ['docs/**', '*.md', '.gitignore', 'cc-bridge/**', 'gateway/**', 'mcp-bridge/**', 'design/**']
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cleanup old artifacts
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+            const old = artifacts.data.artifacts.filter(a => !a.expired);
+            console.log(`Found ${old.length} artifacts, deleting all...`);
+            for (const a of old) {
+              try {
+                await github.rest.actions.deleteArtifact({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  artifact_id: a.id,
+                });
+              } catch (e) {}
+            }
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Resolve Swift package dependencies
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -project MemoryPalace.xcodeproj \
+            -scheme MemoryPalaceIOS
+
+      - name: Install signing certificate
+        env:
+          P12_BASE64: ${{ secrets.P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+        run: |
+          # Create keychain
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security set-keychain-settings -t 3600 build.keychain
+          
+          # Import certificate
+          echo "$P12_BASE64" | base64 --decode > /tmp/cert.p12
+          security import /tmp/cert.p12 -k build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+          rm /tmp/cert.p12
+          
+          echo "✅ Signing certificate installed"
+
+      - name: Install provisioning profiles
+        env:
+          MOBILEPROVISION_BASE64: ${{ secrets.MOBILEPROVISION_BASE64 }}
+          MOBILEPROVISION_WIDGET_BASE64: ${{ secrets.MOBILEPROVISION_WIDGET_BASE64 }}
+          MOBILEPROVISION_BROADCAST_BASE64: ${{ secrets.MOBILEPROVISION_BROADCAST_BASE64 }}
+        run: |
+          # 09-05：粟粟重签了六张（带 App Group），这里先装主 App + Widget 两张。
+          # profile 锁 bundle id：一张只管一个 target，扩展必须各自有一张。
+          DIR=~/Library/MobileDevice/Provisioning\ Profiles
+          mkdir -p "$DIR"
+          echo "$MOBILEPROVISION_BASE64" | base64 --decode > "$DIR/mp-bunny.mobileprovision"
+          if [ -n "$MOBILEPROVISION_WIDGET_BASE64" ]; then
+            echo "$MOBILEPROVISION_WIDGET_BASE64" | base64 --decode > "$DIR/mp-bunny-widget.mobileprovision"
+          fi
+          # 09-07：屏幕直播的 Broadcast Upload Extension（MP iOS Dev - Bunny Broadcast）
+          if [ -n "$MOBILEPROVISION_BROADCAST_BASE64" ]; then
+            echo "$MOBILEPROVISION_BROADCAST_BASE64" | base64 --decode > "$DIR/mp-bunny-broadcast.mobileprovision"
+          fi
+          # 装完点名核对，别只信 exit code——空 secret 会 decode 出 0 字节文件而不报错
+          for f in "$DIR"/*.mobileprovision; do
+            NAME=$(security cms -D -i "$f" 2>/dev/null | plutil -extract Name raw - 2>/dev/null || echo "解析失败")
+            echo "  · $(basename "$f") → $NAME ($(wc -c < "$f") 字节)"
+          done
+          echo "✅ Provisioning profiles installed"
+
+      - name: Inspect provisioning profile entitlements
+        run: |
+          PROFILE=~/Library/MobileDevice/Provisioning\ Profiles/mp-bunny.mobileprovision
+          echo "=== Profile UUID / Name ==="
+          security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract Name xml1 -o - - | cat
+          echo "=== Entitlements ==="
+          security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract Entitlements xml1 -o - - | cat
+          echo "=== aps-environment check ==="
+          security cms -D -i "$PROFILE" 2>/dev/null | plutil -extract Entitlements.aps-environment xml1 -o - - 2>/dev/null \
+            && echo "✅ aps-environment FOUND" \
+            || echo "❌ aps-environment MISSING — profile has no Push capability"
+
+
+      - name: Inspect provisioning profile entitlements
+        run: |
+          PROFILE=$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | head -1)
+          echo "Profile: $PROFILE"
+          security cms -D -i "$PROFILE" > /tmp/profile.plist
+          echo "=== Entitlements ==="
+          /usr/libexec/PlistBuddy -c "Print :Entitlements" /tmp/profile.plist || true
+          if grep -q "aps-environment" /tmp/profile.plist; then
+            echo "✅ aps-environment FOUND"
+          else
+            echo "❌ aps-environment MISSING — profile lacks Push capability"
+          fi
+
+      - name: Archive (signed)
+        run: |
+          xcodebuild archive \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -project MemoryPalace.xcodeproj \
+            -scheme MemoryPalaceIOS \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/LiB.xcarchive \
+            CURRENT_PROJECT_VERSION=$(( ${{ github.run_number }} + 1000 ))
+
+      - name: Inspect app entitlements (post-archive)
+        run: |
+          APP=$(find build/LiB.xcarchive/Products/Applications -name "*.app" | head -1)
+          echo "=== App entitlements ==="
+          codesign -d --entitlements - "$APP" 2>&1 | cat
+          echo "=== aps-environment check ==="
+          codesign -d --entitlements - "$APP" 2>&1 | grep -i "aps-environment" \
+            && echo "✅ aps-environment present in signed app" \
+            || echo "❌ aps-environment NOT in signed app"
+
+
+      - name: Inspect app entitlements (post-archive)
+        run: |
+          APP=$(find build/LiB.xcarchive/Products/Applications -name "*.app" | head -1)
+          echo "App: $APP"
+          codesign -d --entitlements - "$APP" 2>/dev/null | head -30 || true
+          if codesign -d --entitlements - "$APP" 2>/dev/null | grep -q "aps-environment"; then
+            echo "✅ App has aps-environment entitlement"
+          else
+            echo "❌ App MISSING aps-environment entitlement"
+          fi
+
+      - name: Export .ipa
+        run: |
+          cat > ExportOptions.plist << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>development</string>
+            <key>teamID</key>
+            <string>${{ secrets.TEAM_ID }}</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>com.susu.MemoryPalace.ios</key>
+              <string>MP iOS Dev - Bunny</string>
+              <key>com.susu.MemoryPalace.ios.Widget</key>
+              <string>MP iOS Dev - Bunny Widget</string>
+              <key>com.susu.MemoryPalace.ios.Broadcast</key>
+              <string>MP iOS Dev - Bunny Broadcast</string>
+            </dict>
+          </dict>
+          </plist>
+          PLIST
+          
+          xcodebuild -exportArchive \
+            -archivePath build/LiB.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist ExportOptions.plist
+          
+          IPA=$(find build/export -name "*.ipa" | head -1)
+          cp "$IPA" LostInBlossom.ipa
+          echo "✅ Signed IPA: $(ls -lh LostInBlossom.ipa | awk '{print $5}')"
+
+      - name: Deploy to VPS
+        if: success()
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          echo "${{ secrets.VPS_SSH_KEY }}" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            scp -P "$VPS_PORT" -o StrictHostKeyChecking=no -i /tmp/deploy_key \
+              LostInBlossom.ipa "root@${VPS_HOST}":/root/projects/lib-web/LostInBlossom.ipa
+            scp -P "$VPS_PORT" -o StrictHostKeyChecking=no -i /tmp/deploy_key \
+              LostInBlossom.ipa "root@${VPS_HOST}":/var/www/lib-dl/LostInBlossom.ipa
+            echo "✅ Deployed signed IPA to VPS (正式 /dl/install)"
+          else
+            # B 计划试验包：只进 /dl/b/，正式通道不碰
+            scp -P "$VPS_PORT" -o StrictHostKeyChecking=no -i /tmp/deploy_key \
+              LostInBlossom.ipa "root@${VPS_HOST}":/var/www/lib-dl/b/LostInBlossom.ipa
+            echo "✅ Deployed B build to VPS (试验 /dl/b/install)"
+          fi
+          rm -f /tmp/deploy_key
+
+      - name: Cleanup keychain
+        if: always()
+        run: security delete-keychain build.keychain 2>/dev/null || true

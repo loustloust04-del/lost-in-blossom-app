@@ -1,0 +1,200 @@
+name: MemoryPalace
+options:
+  bundleIdPrefix: com.susu
+  xcodeVersion: "16.0"
+  minimumXcodeGenVersion: "2.38"
+
+packages:
+  MarkdownUI:
+    url: https://github.com/gonzalezreal/swift-markdown-ui
+    from: "2.4.1"
+  VariableBlur:
+    url: https://github.com/nikstar/VariableBlur
+    from: "1.3.0"
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation
+    from: "0.9.19"
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    from: "1.13.0"
+  SwiftSoup:
+    url: https://github.com/scinfu/SwiftSoup
+    from: "2.7.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+
+targets:
+  MemoryPalaceIOS:
+    type: application
+    platform: iOS
+    deploymentTarget:
+      iOS: "18.0"
+    sources:
+      - path: MemoryPalace
+      # 显式声明 message-renderer.html 进 Copy Bundle Resources。
+      # XcodeGen 默认就把 .html 归到 resources phase，这里再写一遍保证万无一失
+      # （Bundle.main.url(forResource:"message-renderer") 运行时必须能找到）。
+      - path: MemoryPalace/Resources/message-renderer.html
+        buildPhase: resources
+      # 阅读器 WebView 的 JS（extract/readability/turndown）。.js 默认会被 XcodeGen
+      # 当作源码排除或误归类——显式声明进 resources（同 message-renderer.html 先例）。
+      - path: MemoryPalace/Resources/ReaderScripts
+        buildPhase: resources
+      # 联网搜索 browse_url：离屏 WKWebView 注入的正文抽取脚本，必须进 Copy Bundle Resources
+      - path: MemoryPalace/Resources/ReaderScripts
+        buildPhase: resources
+      # 自定义字体：Cormorant Garamond（数字/英文）+ 思源宋体/霞鹜文楷（中文）。
+      # 控制台 v6 杂志式排版依赖这些字体，必须进 Copy Bundle Resources。
+      - path: MemoryPalace/Resources/Fonts
+        buildPhase: resources
+    dependencies:
+      - target: MemoryPalaceBroadcast
+        embed: true
+        codeSign: true
+      - package: MarkdownUI
+      - package: VariableBlur
+      - package: ZIPFoundation
+      - package: SwiftTerm
+      - package: SwiftSoup
+    entitlements:
+      path: MemoryPalace/MemoryPalaceIOS.entitlements
+      properties:
+        aps-environment: development
+        com.apple.developer.healthkit: true
+        com.apple.developer.healthkit.access: []
+        # 2026-09-07：屏幕直播的 Broadcast Extension 是独立进程，
+        # 靠 App Group 读主 App 写的 gatewayBaseURL / phoneDataKey。
+        # 粟粟 09-05 签的六张 profile 全带这个 group（到期 2027-09-05）。
+        com.apple.security.application-groups:
+          - group.com.susu.MemoryPalace
+    info:
+      path: MemoryPalace/Info-iOS.plist
+      properties:
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        ITSAppUsesNonExemptEncryption: false
+        # 语音通话：电话 App「最近通话」里点他 → 系统把 INStartCallIntent 交给我们 → 回拨
+        NSUserActivityTypes:
+          - INStartCallIntent
+          - INStartAudioCallIntent
+        UIBackgroundModes:
+          - processing
+          # 音乐播放器：锁屏/切走后继续放（无此项一锁屏就停）
+          - audio
+          # 语音通话刀0：VoIP 推送（PushKit）。Info.plist 项不是 entitlement，不用重签 profile
+          - voip
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.bunny.lostinblossom.push-agent
+        UIAppFonts:
+          - CormorantGaramond-SemiBold.ttf
+          - SourceHanSerifSC-Regular.otf
+          - LXGWWenKai-Regular.ttf
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.susu.MemoryPalace.ios
+        PRODUCT_NAME: "Lost in Blossom"
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: GQN42B462A
+        CODE_SIGN_IDENTITY: "Apple Development"
+        PROVISIONING_PROFILE_SPECIFIER: "MP iOS Dev - Bunny"
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_EMIT_LOC_STRINGS: YES
+        ENABLE_PREVIEWS: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "保存便签图片到相册"
+        # iOS17+ 朗读引擎(AVSpeechSynthesizer)内部会做麦克风自检，无此声明点朗读即被 TCC 杀（粟粟家真机三连崩实锤 b0b8f313）。App 实际不录音。
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "朗读引擎需要此权限声明（App 不会录音）"
+        INFOPLIST_KEY_NSHealthShareUsageDescription: "Lost in Blossom 需要读取你的步数和睡眠数据，让 Caelum 关心你的健康。"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+      configs:
+        Debug:
+          CODE_SIGN_STYLE: Automatic
+        Release:
+          CODE_SIGN_STYLE: Manual
+
+  # 屏幕直播（连拍版）· Broadcast Upload Extension
+  # 每 ~2.5s 抓一帧 720p JPEG POST 给 gateway，see_screen 优先吃这份。
+  # 服务端已就绪（gateway/src/screencast.ts，09-03 建），这里补 iOS 那半。
+  # ⚠️ Extension 内存墙 50MB，超一字节即被杀——故连拍而非视频流。
+  MemoryPalaceBroadcast:
+    type: app-extension
+    platform: iOS
+    deploymentTarget:
+      iOS: "18.0"
+    sources:
+      - path: MemoryPalaceBroadcast
+    dependencies:
+      - sdk: ReplayKit.framework
+    entitlements:
+      path: MemoryPalaceBroadcast/MemoryPalaceBroadcast.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.susu.MemoryPalace
+    info:
+      path: MemoryPalaceBroadcast/Info.plist
+      properties:
+        # 控制中心的录屏列表靠 CFBundleDisplayName 显示，缺了就可能不列。
+        # 名字跟主 App 一致（Lost in Blossom）——兔兔 09-09 说 App 早改名了，
+        # 叫「记忆宫殿」她在列表里认不出来
+        # （09-09 兔兔实测「屏幕录制那里没看到我们的 App」）。
+        # INFOPLIST_KEY_CFBundleDisplayName 那种写法对 app-extension 不生效，直接写进 plist。
+        CFBundleDisplayName: Lost in Blossom
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.broadcast-services-upload
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SampleHandler
+          RPBroadcastProcessMode: RPBroadcastProcessModeSampleBuffer
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.susu.MemoryPalace.ios.Broadcast
+        # 产物里 MinimumOSVersion 出来是 18.5（SDK 默认），比主 App 的 18.0 高——
+        # 兔兔手机若低于 18.5，系统会静默跳过这个扩展。显式钉死。
+        IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+        CODE_SIGN_ENTITLEMENTS: MemoryPalaceBroadcast/MemoryPalaceBroadcast.entitlements
+      configs:
+        Debug:
+          CODE_SIGN_STYLE: Automatic
+        Release:
+          CODE_SIGN_STYLE: Manual
+          DEVELOPMENT_TEAM: GQN42B462A
+          CODE_SIGN_IDENTITY: "Apple Development"
+          PROVISIONING_PROFILE_SPECIFIER: "MP iOS Dev - Bunny Broadcast"
+
+  StickerProbeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget:
+      iOS: "18.0"
+    sources:
+      - path: StickerProbeUITests
+    dependencies:
+      - target: MemoryPalaceIOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.susu.MemoryPalace.ios.uitests
+        TEST_TARGET_NAME: MemoryPalaceIOS
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  MemoryPalaceIOS:
+    build:
+      targets:
+        MemoryPalaceIOS: all
+  StickerProbeUITests:
+    build:
+      targets:
+        MemoryPalaceIOS: all
+        StickerProbeUITests: all
+    test:
+      targets:
+        - StickerProbeUITests
+
+# Day 12 mega update — trigger build

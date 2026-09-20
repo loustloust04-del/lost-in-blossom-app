@@ -1,0 +1,10 @@
+{
+  "enabledMcpjsonServers": [
+    "mobai"
+  ],
+  "permissions": {
+    "allow": [
+      "mcp__cc-bridge__reply"
+    ]
+  }
+}

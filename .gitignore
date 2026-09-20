@@ -1,0 +1,38 @@
+
+*~
+*.bak.*
+.build/
+build/
+# Build artifacts
+# CC Bridge
+cc-bridge/node_modules
+.claude/worktrees/
+DerivedData/
+.DS_Store
+.env
+.env.save
+gateway/node_modules/
+# macOS
+mcp-bridge/node_modules/
+node_modules/
+Package.pins
+Package.resolved
+Packages/
+suli-ref/
+# Swift Package Manager
+.swiftpm/
+*.swp
+.worktrees/
+# Worktrees
+# Xcode
+*.xcodeproj/
+xcuserdata/
+*.xcworkspace/
+chatroom/node_modules/
+chatroom/*.db
+
+# cc-bridge runtime artifacts
+cc-bridge/cc-bridge/offline/
+cc-bridge/inbound/
+cc-bridge/proactive-state.json
+cc-bridge/offline/
