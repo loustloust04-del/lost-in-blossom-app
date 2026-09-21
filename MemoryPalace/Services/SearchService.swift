@@ -185,19 +185,22 @@ enum SearchService {
                             )
                             let convs = (try? context.fetch(convDesc)) ?? []
                             let currentNodeByConv = Dictionary(uniqueKeysWithValues: convs.map { ($0.id, $0.currentNodeId) })
-                            let allNodesDesc = FetchDescriptor<MessageNode>(
+                            // 09-21 搜索慢的大头在这：命中的每条对话都把**全部节点连正文**拉出来，只为算主线
+                            // （1200 条的对话一次命中 = 1200 条正文进内存）。主线只需要 id/parentId/childrenIds/
+                            // role/isTrashed，正文一个字都不用；hasContent 按 true 处理——空正文节点反正搜不中，
+                            // 多算进主线也无害。再按 (对话, currentNodeId) 缓存，逐字打字时不重算。
+                            var lite = FetchDescriptor<MessageNode>(
                                 predicate: #Predicate<MessageNode> { chunk.contains($0.conversationId) && $0.profileId == pid }
                             )
-                            let allNodesInChunk = (try? context.fetch(allNodesDesc)) ?? []
-                            let allNodesByConv = Dictionary(grouping: allNodesInChunk) { $0.conversationId }
+                            lite.propertiesToFetch = [\.id, \.conversationId, \.role, \.parentId, \.childrenIds, \.isTrashed]
+                            let liteNodes = (try? context.fetch(lite)) ?? []
+                            let liteByConv = Dictionary(grouping: liteNodes) { $0.conversationId }
                             for convId in chunk {
                                 // 对话行查不到（孤儿节点）→ 整对话排除，与改造前 guard-continue 同语义
                                 guard let currentNodeId = currentNodeByConv[convId],
                                       let nodesInConv = nodesByConv[convId] else { continue }
-                                let mainPathSet = ConversationViewModel.computeMainPathSet(
-                                    nodes: allNodesByConv[convId] ?? [],
-                                    currentNodeId: currentNodeId
-                                )
+                                let mainPathSet = mainPathSetCached(convId: convId, currentNodeId: currentNodeId,
+                                                                    nodes: liteByConv[convId] ?? [])
                                 for node in nodesInConv {
                                     let onMain = mainPathSet.contains(node.id)
                                     if filter.resourceKind == .conversation && onMain {
@@ -299,6 +302,62 @@ enum SearchService {
     // MARK: - Content Search (keyword IN predicate — SQLite filters)
 
     /// Keyword search, no date range
+    // MARK: - 主线集合缓存（09-21）
+
+    private static let mainPathCacheLock = NSLock()
+    private static var mainPathCache: [String: Set<String>] = [:]   // key: convId|currentNodeId
+
+    /// 只读 id/parentId/childrenIds/role/isTrashed 的主线计算（不碰 content，配合 propertiesToFetch 瘦身）。
+    /// 算法与 ConversationViewModel.computeMainPathSet 一致，只是 hasContent 恒 true。
+    private static func mainPathSetCached(convId: String, currentNodeId: String, nodes: [MessageNode]) -> Set<String> {
+        let key = convId + "|" + currentNodeId
+        mainPathCacheLock.lock()
+        if let hit = mainPathCache[key] { mainPathCacheLock.unlock(); return hit }
+        mainPathCacheLock.unlock()
+
+        struct NI { let role: String; let isTrashed: Bool; let parentId: String?; let childrenIds: [String] }
+        var infoMap: [String: NI] = [:]
+        infoMap.reserveCapacity(nodes.count)
+        for n in nodes { infoMap[n.id] = NI(role: n.role, isTrashed: n.isTrashed, parentId: n.parentId, childrenIds: n.childrenIds) }
+
+        var mainPathIds = Set<String>()
+        var rootId: String? = nil
+        var traceId: String? = currentNodeId
+        while let nid = traceId, let info = infoMap[nid] {
+            mainPathIds.insert(nid)
+            if info.parentId == nil || infoMap[info.parentId ?? ""] == nil { rootId = nid }
+            traceId = info.parentId
+        }
+        if rootId == nil {
+            rootId = infoMap.compactMap { (k, v) -> String? in (v.parentId == nil || infoMap[v.parentId ?? ""] == nil) ? k : nil }.min()
+        }
+        var effectiveChildren: [String: [String]] = [:]
+        for (nid, info) in infoMap { effectiveChildren[nid] = info.childrenIds.filter { infoMap[$0] != nil } }
+        for (nid, info) in infoMap {
+            if let pid = info.parentId, infoMap[pid] != nil, !(effectiveChildren[pid]?.contains(nid) ?? false) {
+                effectiveChildren[pid, default: []].append(nid)
+            }
+        }
+        var pathNodeIds = Set<String>()
+        if let rootId {
+            var visited = Set<String>()
+            var currentId: String? = rootId
+            while let nid = currentId, let info = infoMap[nid], !visited.contains(nid) {
+                visited.insert(nid)
+                if (info.role == "user" || info.role == "assistant") && !info.isTrashed { pathNodeIds.insert(nid) }
+                let children = effectiveChildren[nid] ?? []
+                if children.isEmpty { break }
+                else if children.count == 1 { currentId = children[0] }
+                else { currentId = children.first(where: { mainPathIds.contains($0) }) ?? children[0] }
+            }
+        }
+        mainPathCacheLock.lock()
+        if mainPathCache.count > 400 { mainPathCache.removeAll() }
+        mainPathCache[key] = pathNodeIds
+        mainPathCacheLock.unlock()
+        return pathNodeIds
+    }
+
     private static func fetchContentWithKeyword(
         context: ModelContext, search: String, profileId: String,
         hasUser: Bool, hasAssistant: Bool
