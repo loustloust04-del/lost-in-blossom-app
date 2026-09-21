@@ -1961,7 +1961,7 @@ private struct MultimodalUserBubble: View {
                         // 点开走她的 AttachmentPreviewSheet：全屏 + 保存到相册 + QuickLook
                         .onTapGesture { previewStart = 0; previewItems = stripItems }
                 } else {
-                    BubbleAttachmentStrip(items: stripItems, isUser: isUser)
+                    BubbleAttachmentStrip(items: stripItems, isUser: true)   // 多模态气泡只有 user 发
                 }
             }
             ForEach(Array(block.fileNames.enumerated()), id: \.offset) { _, title in
