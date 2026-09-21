@@ -113,6 +113,20 @@ struct IOSDebugPage: View {
             }
             .listRowBackground(Theme.mainBg)
 
+            // 弹泡调音台（粟粟原件）：气泡模式新消息「跳出来」的弹性/起点/倾斜/果冻，滑条即调即生效
+            Section {
+                NavigationLink(destination: BubblePopTunerPage()) {
+                    Text("弹泡调音台")
+                        .font(.system(size: Theme.F.body))
+                        .foregroundColor(Theme.textPrimary)
+                }
+            } footer: {
+                Text("气泡模式里新消息弹出来的手感。出厂值是粟粟真机调的。")
+                    .font(.caption2)
+                    .foregroundColor(Theme.textMuted)
+            }
+            .listRowBackground(Theme.mainBg)
+
             // 深翻基准：机器定速滚 20s，出一份数字（对照粟粟 ChatPerfBench）
             Section {
                 ForEach([3000.0, 8000.0], id: \.self) { sp in
