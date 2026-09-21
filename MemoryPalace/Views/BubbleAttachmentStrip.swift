@@ -72,7 +72,8 @@ struct BubbleAttachmentStrip: View {
     private func imageBlock(data: Data) -> some View {
         Group {
             #if os(iOS)
-            if let uiImg = UIImage(data: data) {
+            // 09-20：走 ThumbnailCache（ImageIO 缩略解码 + 缓存），不再每次 body 全尺寸解码原图
+            if let uiImg = ThumbnailCache.thumbnail(for: data, maxPixel: thumbSize) {
                 Image(uiImage: uiImg)
                     .resizable()
                     .aspectRatio(contentMode: .fill)

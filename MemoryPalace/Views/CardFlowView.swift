@@ -1403,7 +1403,7 @@ private struct InputFieldContainer: View {
                     HStack(spacing: 8) {
                         ForEach(pendingAttachments) { att in
                             ZStack(alignment: .topTrailing) {
-                                if att.isImage, let d = att.imageData, let ui = UIImage(data: d) {
+                                if att.isImage, let d = att.imageData, let ui = ThumbnailCache.thumbnail(for: d, maxPixel: 56) {
                                     Image(uiImage: ui)
                                         .resizable()
                                         .scaledToFill()
@@ -1949,28 +1949,19 @@ private struct MultimodalUserBubble: View {
         VStack(alignment: .leading, spacing: 6) {
             if !block.images.isEmpty {
                 // 一张：原样 200pt 宽；多张：九宫格 3 列，点哪张从哪张开始预览（09-13 兔兔真机 #8）
-                let uiImages = block.images.compactMap { UIImage(data: $0) }
-                let allItems: [BubbleAttachmentItem] = block.images.enumerated().map { .image(name: "photo\($0.offset + 1).jpg", data: $0.element) }
-                if uiImages.count == 1 {
-                    Image(uiImage: uiImages[0])
+                // 09-20 兔兔：多图要「可滑动的一长条」——和附件条同一个零件（>3 张自动横滑 + 边缘渐隐），
+                // 缩略图走 ThumbnailCache，不再每次 body 全尺寸解码（九张原图就是她说的那个卡死）
+                let stripItems: [BubbleAttachmentItem] = block.images.enumerated().map { .image(name: "photo\($0.offset + 1).jpg", data: $0.element) }
+                if stripItems.count == 1, let one = ThumbnailCache.thumbnail(for: block.images[0], maxPixel: 200) {
+                    Image(uiImage: one)
                         .resizable()
                         .scaledToFit()
                         .frame(maxWidth: 200)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         // 点开走她的 AttachmentPreviewSheet：全屏 + 保存到相册 + QuickLook
-                        .onTapGesture { previewStart = 0; previewItems = allItems }
+                        .onTapGesture { previewStart = 0; previewItems = stripItems }
                 } else {
-                    let cols = [GridItem(.fixed(64), spacing: 4), GridItem(.fixed(64), spacing: 4), GridItem(.fixed(64), spacing: 4)]
-                    LazyVGrid(columns: cols, alignment: .leading, spacing: 4) {
-                        ForEach(Array(uiImages.enumerated()), id: \.offset) { idx, ui in
-                            Image(uiImage: ui)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 64, height: 64)
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
-                                .onTapGesture { previewStart = idx; previewItems = allItems }
-                        }
-                    }
+                    BubbleAttachmentStrip(items: stripItems, isUser: isUser)
                 }
             }
             ForEach(Array(block.fileNames.enumerated()), id: \.offset) { _, title in
