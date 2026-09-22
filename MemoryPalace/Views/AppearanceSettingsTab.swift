@@ -162,6 +162,24 @@ struct IOSAppearancePage: View {
             .listRowBackground(Theme.mainBg)
             .listRowSeparator(.hidden)
 
+            Section {
+                ThinkingOrbStylePicker()
+            } header: {
+                Text("等待回复的思考球")
+            } footer: {
+                Text("等他回复时显示的小动画，点选即生效。选「三点」是原来的样子。")
+                    .font(.caption)
+                    .foregroundColor(Theme.textMuted)
+            }
+            .listRowBackground(Theme.mainBg)
+            .listRowSeparator(.hidden)
+
+            Section("等待回复的文案") {
+                ThinkingPhrasePackPicker(fontSize: 13)
+            }
+            .listRowBackground(Theme.mainBg)
+            .listRowSeparator(.hidden)
+
             Section("消息显示") {
                 Toggle(isOn: $chatBubbleMode) {
                     VStack(alignment: .leading, spacing: 2) {

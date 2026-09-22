@@ -140,10 +140,29 @@ enum AvatarImageCache {
 // 头像 + 名字/时间戳在组顶显示，尾巴挂在气泡上。
 // 按段落自动拆多气泡（splitBlocks）；B6 A2' 流式=已完成段落逐泡弹入 + 尾部 typing dots，不吐字。
 
-/// 等待/流式指示点：三点错峰小幅弹跳（流式尾泡 + CC 等待泡共用）。
-/// 独立 struct 自持 state，动画只驱动点自身 offset，不碰泡的 transition
-/// （interpolatingSpring additive 叠加教训——见 feedback_swiftui_animation_transaction_traps）。
+/// 等待/流式指示：思考球（Vendor/ThinkingOrbsKit，px20 放大到 34）+ 轮换 shimmer 文案（粟粟 244bc7b8）。
+/// 流式尾泡 + CC 等待泡共用；样式跟设置页 `thinkingOrbStyle`（含怀旧三点）。
+/// 球用 textSecondary mask 染色；纯 TimelineView 驱动没有 @State，不碰泡的 transition。
 struct TypingDotsView: View {
+    @AppStorage(OrbState.storageKey) private var styleRaw = OrbState.working.rawValue
+
+    var body: some View {
+        if styleRaw == OrbState.legacyDotsRaw {
+            BouncingDotsView()
+        } else {
+            HStack(spacing: 8) {
+                Theme.textSecondary
+                    .mask { ThinkingOrb(state: OrbState.stored(styleRaw), size: .px20, displaySize: 34) }
+                    .frame(width: 34, height: 34)
+                RotatingShimmerLabel()
+            }
+            .padding(.vertical, 2)
+        }
+    }
+}
+
+/// 怀旧三点：原版等待动画（三点错峰小幅弹跳），设置里选「三点」时用。
+struct BouncingDotsView: View {
     @State private var bouncing = false
 
     var body: some View {
