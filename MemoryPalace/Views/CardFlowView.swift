@@ -2281,6 +2281,27 @@ struct BubbleView: View {
                 }
     }
 
+    /// [流式轻渲染] 把正在生成的文本切成「定型部分」和「正在长的最后一段」：
+    /// 切点 = 最后一个不在代码围栏内的空行（\n\n）。代码块没闭合时整块留在 tail，免得半截围栏被当正文解析。
+    static func splitStreaming(_ text: String) -> (stable: String, tail: String) {
+        var inFence = false
+        var lastCut: String.Index? = nil
+        var i = text.startIndex
+        var lineStart = text.startIndex
+        while i < text.endIndex {
+            if text[i] == "\n" {
+                let line = text[lineStart..<i]
+                if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") { inFence.toggle() }
+                let next = text.index(after: i)
+                if !inFence, next < text.endIndex, text[next] == "\n" { lastCut = next }
+                lineStart = text.index(after: i)
+            }
+            i = text.index(after: i)
+        }
+        guard let cut = lastCut else { return ("", text) }
+        return (String(text[..<cut]), String(text[text.index(after: cut)...]))
+    }
+
     // MARK: - [B·砖3] 长按菜单条目（Telegram 式浮层）——与 macOS .contextMenu 同一份条件逻辑
     private func nodeMenuSpecs() -> [MenuActionSpec] {
         var specs: [MenuActionSpec] = []
@@ -2621,6 +2642,32 @@ struct BubbleView: View {
                         } else {
                             // 普通消息：MarkdownUI 渲染（纯 SwiftUI，零白屏）
                             // 抹平文档感（## 标题/嵌套列表/---）；只影响渲染，复制仍是 node.content 原文
+                            if isStreaming && !isUser {
+                                // [流式轻渲染] 他吐字时：定型的段落走缓存 Markdown（只在跨段时重解析一次），
+                                // 正在长的最后一段走纯 Text。之前每来一个字整条重解析，而且每个前缀都
+                                // 进缓存（一条长回复几百个半截条目）——打字期、吐字期卡的一大块。
+                                let split = Self.splitStreaming(BubbleMarkdownSimplifier.simplify(displayText))
+                                VStack(alignment: .leading, spacing: 6 * CGFloat(paragraphSpacingScale)) {
+                                    if !split.stable.isEmpty {
+                                        Markdown(MarkdownParseCache.content(nodeId: node.id + "#stream", text: split.stable))
+                                            .markdownTheme(
+                                                .memoryPalace(
+                                                    fontName: selectedFont,
+                                                    scale: CGFloat(fontScale > 0 ? fontScale : 1.0),
+                                                    lineSpacingScale: CGFloat(lineSpacingScale),
+                                                    paragraphSpacingScale: CGFloat(paragraphSpacingScale)
+                                                )
+                                            )
+                                    }
+                                    if !split.tail.isEmpty {
+                                        Text(split.tail)
+                                            .font(FontManager.font(size: 15 * CGFloat(fontScale > 0 ? fontScale : 1.0)))
+                                            .foregroundColor(Theme.textPrimary)
+                                            .lineSpacing(4 * CGFloat(fontScale > 0 ? fontScale : 1.0) * CGFloat(lineSpacingScale))
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                }
+                            } else {
                             // round 10：解析走缓存（窗口扩张时后台已预热；未命中就地解析一次）
                             Markdown(MarkdownParseCache.content(nodeId: node.id, text: isUser ? displayText : BubbleMarkdownSimplifier.simplify(displayText)))
                                 .markdownTheme(
@@ -2632,6 +2679,7 @@ struct BubbleView: View {
                                     )
                                 )
                                 .textSelection(.enabled)
+                            }
                         }
                     }
                 }
