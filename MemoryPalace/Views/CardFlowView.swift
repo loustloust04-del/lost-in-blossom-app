@@ -2660,11 +2660,13 @@ struct BubbleView: View {
                                             )
                                     }
                                     if !split.tail.isEmpty {
-                                        Text(split.tail)
-                                            .font(FontManager.font(size: 15 * CGFloat(fontScale > 0 ? fontScale : 1.0)))
-                                            .foregroundColor(Theme.textPrimary)
-                                            .lineSpacing(4 * CGFloat(fontScale > 0 ? fontScale : 1.0) * CGFloat(lineSpacingScale))
-                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                        // 逐词淡入（09-23）：新到的字从透明淡入，老字不动；只在流式尾巴上
+                                        FadeInStreamingText(
+                                            text: split.tail,
+                                            font: FontManager.font(size: 15 * CGFloat(fontScale > 0 ? fontScale : 1.0)),
+                                            color: Theme.textPrimary,
+                                            lineSpacing: 4 * CGFloat(fontScale > 0 ? fontScale : 1.0) * CGFloat(lineSpacingScale)
+                                        )
                                     }
                                 }
                             } else {
