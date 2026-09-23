@@ -29,6 +29,8 @@ final class ChatScrollBench: NSObject {
         isRunning = true
         startedAt = 0
         lastTs = 0
+        lastGrowthAt = 0
+        lastHeight = 0
         BreadcrumbLog.shared.add("📊", "深翻基准开始：\(Int(speed))pt/s × \(Int(duration))s，内存 \(Int(baseline))MB")
         let l = CADisplayLink(target: self, selector: #selector(tick(_:)))
         l.add(to: .main, forMode: .common)
@@ -46,8 +48,16 @@ final class ChatScrollBench: NSObject {
         let y = min(maxY, sv.contentOffset.y + CGFloat(speed * dt))
         sv.setContentOffset(CGPoint(x: sv.contentOffset.x, y: y), animated: false)
         if now - startedAt >= duration { stop(reason: "到时"); return }
-        if y >= maxY - 1, sv.contentSize.height > 0 { stop(reason: "到头") }
+        // 到头：渲染窗口是分批挂的（滑到顶自动扩 24 条），别一碰到窗口末尾就判到头——
+        // 等 1s，内容还在长就继续（兔兔 09-23 第一份数据 3s 就「到头」了，其实是撞上窗口边）
+        if y >= maxY - 1, sv.contentSize.height > 0 {
+            if lastGrowthAt == 0 { lastGrowthAt = now; lastHeight = sv.contentSize.height }
+            if sv.contentSize.height > lastHeight + 1 { lastGrowthAt = now; lastHeight = sv.contentSize.height }
+            if now - lastGrowthAt > 1.0 { stop(reason: "到头") }
+        }
     }
+    private var lastGrowthAt: CFTimeInterval = 0
+    private var lastHeight: CGFloat = 0
 
     private func stop(reason: String) {
         link?.invalidate(); link = nil

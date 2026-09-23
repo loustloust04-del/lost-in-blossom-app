@@ -220,6 +220,8 @@ struct CardFlowView: View {
     /// 整个聊天页每次上滑都重算一遍（兔兔 09-15：「百多条从下往上滑很卡、页面变重」——这一半是它）。
     /// 存垫块：满一屏后恒为 0，不再触发重算。
     @State private var shortConvPad: CGFloat = 0
+    /// [冻结流式] 离底那一刻的流式快照；nil = 在底、正常逐字
+    @State private var frozenStreamingText: String? = nil
     @State private var textSelectItem: TextSelectItem?
 
     @ViewBuilder
@@ -247,7 +249,9 @@ struct CardFlowView: View {
             hasBranches: info != nil,
             branchInfo: info,
             isStreaming: isNodeStreaming,
-            streamingContentText: isNodeAPIStreaming ? viewModel.streamingText : "",
+            // [冻结流式] 她上滑读历史时，正在吐字的那条显示离底那一刻的快照，不再逐字更新——
+            // 高度不变就不可能被推、被拽、一闪一闪（兔兔 09-23 #10）。回到底那一刻追上最新。
+            streamingContentText: isNodeAPIStreaming ? (frozenStreamingText ?? viewModel.streamingText) : "",
             isThinking: isThinkingNow,
             streamingThinkingText: streamingThinkingForNode,
             thinkingSummary: thinkingSummaryForNode,
@@ -521,6 +525,12 @@ struct CardFlowView: View {
                         geometry.contentOffset.y + geometry.contentInsets.top < 200
                     } action: { _, atBottom in
                         isAtBottom = atBottom
+                        // [冻结流式] 离底就冻住正在吐的那条；回底解冻
+                        if !atBottom, !viewModel.streamingText.isEmpty, frozenStreamingText == nil {
+                            frozenStreamingText = viewModel.streamingText
+                        } else if atBottom, frozenStreamingText != nil {
+                            frozenStreamingText = nil
+                        }
                         // round 9：回到底就把渲染窗口收回初始大小——上滑时挂上的几百条气泡全部卸掉，
                         // 页面重新变轻（左右滑分页也跟着轻）。她在底，收的是物理远端，视口不动。
                         if atBottom, viewModel.renderStart < max(0, viewModel.currentPath.count - 2 * ConversationViewModel.initialRenderWindow) {
@@ -658,7 +668,9 @@ struct CardFlowView: View {
                         }
                     }
                     .onChange(of: viewModel.streamingText) { oldText, newText in
-                        // [hold-reading] 她在读历史时他在吐字：每次文字变化都续一段补偿期
+                        // 流式结束：解冻（定稿由 node.content 接管，快照失效）
+                        if newText.isEmpty { frozenStreamingText = nil }
+                        // [hold-reading] 她在读历史时他在吐字：内容已冻结，这里只兜底
                         if !isAtBottom { scrollHost.holdReading(); if !newText.isEmpty { return } }
                         // 流式结束 → 回底（只在她本来就在底时；反转后在底吐字本就钉底，这是校准）
                         if newText.isEmpty && !oldText.isEmpty, isAtBottom {
@@ -2661,9 +2673,13 @@ struct BubbleView: View {
                                     }
                                     if !split.tail.isEmpty {
                                         // 逐词淡入（09-23）：新到的字从透明淡入，老字不动；只在流式尾巴上
+                                        // 字号/字体与 MarkdownUI 主题对齐（13.5×scale，同一字体），否则段落定稿那一下
+                                        // 会从 15pt 缩到 13.5pt——兔兔 09-23：「字一会儿大一会儿小」
                                         FadeInStreamingText(
                                             text: split.tail,
-                                            font: FontManager.font(size: 15 * CGFloat(fontScale > 0 ? fontScale : 1.0)),
+                                            font: selectedFont.isEmpty
+                                                ? FontManager.font(size: 13.5 * CGFloat(fontScale > 0 ? fontScale : 1.0))
+                                                : .custom(selectedFont, size: 13.5 * CGFloat(fontScale > 0 ? fontScale : 1.0)),
                                             color: Theme.textPrimary,
                                             lineSpacing: 4 * CGFloat(fontScale > 0 ? fontScale : 1.0) * CGFloat(lineSpacingScale)
                                         )
