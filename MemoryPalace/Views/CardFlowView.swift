@@ -1926,13 +1926,18 @@ private struct MultimodalUserBubble: View {
     @State private var previewItems: [BubbleAttachmentItem]? = nil
     @State private var previewStart: Int = 0
 
-    private struct ContentBlock {
+    struct ContentBlock {
         var images: [Data] = []            // 09-13：多图全画（之前只留最后一张）
         var fileNames: [String] = []       // CC 车道 file block / document 的名字
         var text: String = ""
     }
 
-    private var parsed: ContentBlock {
+    /// 图片是否已由气泡外的附件条画了（09-23 兔兔：图片条要在对话框外面，像粟粟那样）
+    var imagesOutside: Bool = false
+
+    private var parsed: ContentBlock { Self.parse(content) }
+
+    static func parse(_ content: String) -> ContentBlock {
         var block = ContentBlock()
         guard let data = content.data(using: .utf8),
               let arr = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else {
@@ -1959,7 +1964,7 @@ private struct MultimodalUserBubble: View {
     var body: some View {
         let block = parsed
         VStack(alignment: .leading, spacing: 6) {
-            if !block.images.isEmpty {
+            if !block.images.isEmpty, !imagesOutside {
                 // 一张：原样 200pt 宽；多张：九宫格 3 列，点哪张从哪张开始预览（09-13 兔兔真机 #8）
                 // 09-20 兔兔：多图要「可滑动的一长条」——和附件条同一个零件（>3 张自动横滑 + 边缘渐隐），
                 // 缩略图走 ThumbnailCache，不再每次 body 全尺寸解码（九张原图就是她说的那个卡死）
@@ -2293,6 +2298,13 @@ struct BubbleView: View {
                 }
     }
 
+    /// 只有图片、没有一个字的多模态消息：图片条在壳外画了，壳本身就别出现（09-23）
+    private var imageOnlyMessage: Bool {
+        guard isUser, node.contentType == "multimodal_text" else { return false }
+        let mm = MultimodalUserBubble.parse(node.content)
+        return !mm.images.isEmpty && mm.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && mm.fileNames.isEmpty
+    }
+
     /// [流式轻渲染] 把正在生成的文本切成「定型部分」和「正在长的最后一段」：
     /// 切点 = 最后一个不在代码围栏内的空行（\n\n）。代码块没闭合时整块留在 tail，免得半截围栏被当正文解析。
     static func splitStreaming(_ text: String) -> (stable: String, tail: String) {
@@ -2493,6 +2505,17 @@ struct BubbleView: View {
                 .padding(.horizontal, 4)
             }
 
+            // 多图消息的图片条画在气泡壳**外面**（粟粟同款：图在上、文字气泡在下；兔兔 09-23 #1）
+            if isUser, node.contentType == "multimodal_text" {
+                let mm = MultimodalUserBubble.parse(node.content)
+                if !mm.images.isEmpty {
+                    let items: [BubbleAttachmentItem] = mm.images.enumerated().map { .image(name: "photo\($0.offset + 1).jpg", data: $0.element) }
+                    BubbleAttachmentStrip(items: items, isUser: true)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .padding(.bottom, mm.text.isEmpty && mm.fileNames.isEmpty ? 0 : 4)
+                }
+            }
+
             // Bubble（[B·砖3] iOS 包 BubbleMenuLiftWrapper：长按走自定义浮层，不用系统 contextMenu——
             // 反转列表下系统 lift 快照会颠倒（七月三雷之二）；浮层零件 592074d4 早已进仓，这里接线）
             BubbleMenuLiftWrapper(isUser: isUser, cornerRadius: chatBubbleMode ? bubbleModeCornerRadius : bubbleCornerRadius, actions: useSystemBubbleMenu ? [] : nodeMenuSpecs(),
@@ -2569,7 +2592,8 @@ struct BubbleView: View {
                         MultimodalUserBubble(
                             content: node.content,
                             fontScale: fontScale,
-                            lineSpacingScale: lineSpacingScale
+                            lineSpacingScale: lineSpacingScale,
+                            imagesOutside: true
                         )
                     } else {
                         Text(shouldTruncate ? String(cleaned.prefix(truncateLength)) + "..." : cleaned)
@@ -2769,11 +2793,11 @@ struct BubbleView: View {
 
 // PR(usage): 气泡底部 token 数字已移除（统计走 Token 统计页）
             }
-            .padding(.horizontal, bubblePaddingH)
-            .padding(.vertical, bubblePaddingV)
+            .padding(.horizontal, imageOnlyMessage ? 0 : bubblePaddingH)
+            .padding(.vertical, imageOnlyMessage ? 0 : bubblePaddingV)
             .background(
                 RoundedRectangle(cornerRadius: bubbleCornerRadius)
-                    .fill(isUser ? Theme.userBubble : (hideAssistantBubble ? Color.clear : Theme.assistantBubble))
+                    .fill(imageOnlyMessage ? Color.clear : (isUser ? Theme.userBubble : (hideAssistantBubble ? Color.clear : Theme.assistantBubble)))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: bubbleCornerRadius)
