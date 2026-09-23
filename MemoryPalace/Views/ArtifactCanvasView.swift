@@ -51,6 +51,12 @@ struct ArtifactContent {
                           || code.range(of: "<button|onclick=|<input|<canvas", options: [.regularExpression, .caseInsensitive]) != nil)
     }
 
+    /// 引了外网资源（脚本/样式/图/字体）——国内加载慢甚至不通，是「画布加载不出来」的头号原因（兔兔 09-23）
+    var usesRemoteResources: Bool {
+        code.range(of: #"(src|href)\s*=\s*["']https?://"#, options: [.regularExpression, .caseInsensitive]) != nil
+            || code.range(of: #"@import\s+url\(|url\(\s*["']?https?://"#, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
     /// 完整可加载的 HTML（卡片预览与全屏共用）
     var renderedHTML: String {
         switch type {
@@ -92,7 +98,7 @@ struct ArtifactContent {
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>body{margin:16px;font-family:-apple-system,sans-serif;}</style>
-            <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+            <script src="mermaid.min.js"></script>
             </head>
             <body>
             <div class="mermaid">
@@ -244,15 +250,26 @@ struct ArtifactCanvasView: UIViewRepresentable {
     func updateUIView(_ webView: WKWebView, context: Context) {
         if context.coordinator.loadedHTML != htmlContent {
             context.coordinator.loadedHTML = htmlContent
-            webView.loadHTMLString(htmlContent, baseURL: nil)
+            context.coordinator.revealed = false
+            // baseURL 指向 bundle 资源目录：<script src="mermaid.min.js"> 这类本地资源才找得到
+            webView.loadHTMLString(htmlContent, baseURL: Bundle.main.resourceURL)
+            // 兜底：页面引了外网资源卡在加载时，1.5s 后照样露出——WebView 是渐进渲染的，
+            // 主体早画好了，别让一个加载不到的字体把整页拖成转圈（兔兔 09-23「画布加载不出来」）
+            let c = context.coordinator
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak c] in c?.reveal() }
         }
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var loadedHTML: String? = nil
+        var revealed = false
         let onLoaded: (() -> Void)?
         init(onLoaded: (() -> Void)?) { self.onLoaded = onLoaded }
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { onLoaded?() }
+        func reveal() { guard !revealed else { return }; revealed = true; onLoaded?() }
+        // didCommit = 首批内容已到，就露出；不等所有外链资源 didFinish
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { reveal() }
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { reveal() }
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { reveal() }
     }
 }
 
@@ -295,9 +312,11 @@ struct ArtifactCardView: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(Theme.textPrimary)
                         .lineLimit(1)
-                    Text(artifact.isInteractive ? "点开玩 · 全屏" : "点开看 · 全屏")
+                    Text(artifact.usesRemoteResources
+                         ? "引了外网资源，可能加载慢"
+                         : (artifact.isInteractive ? "点开玩 · 全屏" : "点开看 · 全屏"))
                         .font(.system(size: 11))
-                        .foregroundColor(Theme.textMuted)
+                        .foregroundColor(artifact.usesRemoteResources ? Color.orange.opacity(0.8) : Theme.textMuted)
                 }
                 Spacer()
                 Image(systemName: "arrow.up.left.and.arrow.down.right")

@@ -42,6 +42,9 @@ targets:
       # 当作源码排除或误归类——显式声明进 resources（同 message-renderer.html 先例）。
       - path: MemoryPalace/Resources/ReaderScripts
         buildPhase: resources
+      # 画布 mermaid 离线包（09-23：CDN 在国内加载慢/不通，流程图转半天出不来）
+      - path: MemoryPalace/Resources/mermaid.min.js
+        buildPhase: resources
       # 联网搜索 browse_url：离屏 WKWebView 注入的正文抽取脚本，必须进 Copy Bundle Resources
       - path: MemoryPalace/Resources/ReaderScripts
         buildPhase: resources
