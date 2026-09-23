@@ -2644,7 +2644,9 @@ struct BubbleView: View {
                     let displayText = node.role == "assistant" && !regexScripts.isEmpty
                         ? RegexEngine.apply(scripts: regexScripts, text: rawDisplay, messagePlacement: 2, isMarkdown: true)
                         : rawDisplay
-                    if displayText.isEmpty && isStreaming {
+                    // 思考链正在流式时，上面的思考块已经在动（橙色进度线 + 逐字），
+                    // 框里再放一颗球是重复信号——只在「思考和正文都还没来」时才放（兔兔 09-23）
+                    if displayText.isEmpty && isStreaming && streamingThinkingText.isEmpty {
                         TypingDotsView()
                     } else if !displayText.isEmpty {
                         // 三条路：WebView（原生画不了的：中文斜体/分割线/富文本里的标题引用代码块）
