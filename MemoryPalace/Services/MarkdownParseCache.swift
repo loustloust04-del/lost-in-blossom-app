@@ -14,7 +14,8 @@ enum MarkdownParseCache {
         return c
     }()
 
-    static func key(nodeId: String, text: String) -> String { "\(nodeId)_\(text.count)" }
+    /// 键带文本哈希：气泡模式一条消息拆成多泡、同 nodeId 下两段长度相同时不能串（09-21）
+    static func key(nodeId: String, text: String) -> String { "\(nodeId)_\(text.count)_\(text.hashValue)" }
 
     /// 命中直接返回；未命中就地解析并存入（和以前一样在主线程，只是只做一次）
     static func content(nodeId: String, text: String) -> MarkdownContent {

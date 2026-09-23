@@ -24,14 +24,28 @@ struct ChatMarkdownView: View {
     @AppStorage("paragraphSpacingScale") private var paragraphSpacingScale: Double = 1.65
 
     var body: some View {
-        Markdown(text)
-            .markdownTheme(.memoryPalace(
-                fontName: fontName,
-                scale: scale > 0 ? scale : 1.0,
-                lineSpacingScale: CGFloat(lineSpacingScale),
-                paragraphSpacingScale: CGFloat(paragraphSpacingScale)
-            ))
-            .textSelection(.enabled)
+        // 09-21 气泡模式大更新：气泡模式的正文全走这里，但以前只会 MarkdownUI——
+        // {color:} 彩色字、||剧透||、~~删除线~~ 在气泡模式下全不显示（文章模式早修了）。
+        // 与文章模式同一套路由：聊天体走原生 RichBubbleText；中文斜体/分割线这类回落文章模式那套
+        // 规则由上游 BubbleMarkdownSimplifier 已抹平，这里只需接住聊天体。
+        if RichBubbleText.needsRich(text) {
+            RichBubbleText(
+                text: text,
+                baseColor: Theme.textPrimary,
+                spoilerBg: Theme.textMuted,
+                font: FontManager.font(size: 13.5 * (scale > 0 ? scale : 1.0))
+            )
+        } else {
+            // 解析走缓存（和文章模式同一个 MarkdownParseCache；nodeId 缺省时用文本哈希当键）
+            Markdown(MarkdownParseCache.content(nodeId: nodeId ?? "h\(text.hashValue)", text: text))
+                .markdownTheme(.memoryPalace(
+                    fontName: fontName,
+                    scale: scale > 0 ? scale : 1.0,
+                    lineSpacingScale: CGFloat(lineSpacingScale),
+                    paragraphSpacingScale: CGFloat(paragraphSpacingScale)
+                ))
+                .textSelection(.enabled)
+        }
     }
 }
 
