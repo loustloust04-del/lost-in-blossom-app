@@ -2925,7 +2925,8 @@ struct BubbleView: View {
         .sheet(isPresented: $showFolderPicker) {
             FolderPickerSheet(node: node, profileId: node.profileId)
         }
-        .sheet(isPresented: $showArtifactCanvas) {
+        // 09-23 画布升级：小游戏要真全屏（半页 sheet 玩不了），不是 .sheet
+        .fullScreenCover(isPresented: $showArtifactCanvas) {
             if let artifact = detectedArtifact {
                 ArtifactCanvasSheet(artifact: artifact)
             }
