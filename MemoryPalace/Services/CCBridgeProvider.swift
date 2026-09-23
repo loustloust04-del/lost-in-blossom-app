@@ -82,19 +82,14 @@ final class CCBridgeProvider: BaseChatProvider {
             }
             // 如果CC回复带了文件附件，把它拼进content
             if let att = pendingAttachment {
-                if att.isImage, let imgData = att.imageData {
-                    let b64 = imgData.base64EncodedString()
-                    let mime = att.mimeType ?? "image/png"
-                    let blocks: [[String: Any]] = [
-                        ["type": "image", "source": ["type": "base64", "media_type": mime, "data": b64]],
-                        ["type": "text", "text": contentToSave]
-                    ]
-                    if let json = try? JSONSerialization.data(withJSONObject: blocks),
-                       let jsonStr = String(data: json, encoding: .utf8) {
-                        self.streamingContent = jsonStr
-                        onComplete(jsonStr, nil)
-                        return
-                    }
+                if att.isImage, att.imageData != nil {
+                    // 09-23：之前打包成 multimodal JSON 交给 onComplete，但 assistant 节点的 contentType
+                    // 还是 "text"，渲染层不解包（兔兔：「TXT OK，图片不 OK」）。改走和文件同一条路：
+                    // 字节交给 VM 收口时挂成 .image 段，正文原样
+                    CCBridgeProvider.lastReplyFile = att
+                    self.streamingContent = contentToSave
+                    onComplete(contentToSave, nil)
+                    return
                 } else {
                     // 非图片文件：字节交给 VM 收口时挂成 fileData 段（09-20 之前只剩个名字）
                     CCBridgeProvider.lastReplyFile = att

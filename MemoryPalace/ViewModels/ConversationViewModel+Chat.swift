@@ -990,22 +990,10 @@ extension ConversationViewModel {
         // proactive 附件 fallback：CC主动发的文件走这里
         CCBridgeWebSocketClient.shared.unhandledAttachmentHandler = { [weak self] chatId, att in
             guard let self else { return }
-            // 图片：作为独立 multimodal 消息插入
-            if att.isImage, let imgData = att.imageData {
-                let b64 = imgData.base64EncodedString()
-                let mime = att.mimeType ?? "image/png"
-                let blocks: [[String: Any]] = [
-                    ["type": "image", "source": ["type": "base64", "media_type": mime, "data": b64]],
-                    ["type": "text", "text": "📎 \(att.name)"]
-                ]
-                if let json = try? JSONSerialization.data(withJSONObject: blocks),
-                   let jsonStr = String(data: json, encoding: .utf8) {
-                    // 兔兔 08-31 实测「他发的图显示成一大串字母」的真凶：这里插的是
-                    // multimodal JSON，contentType 却写死 "text" → 渲染层不解包，
-                    // 整段 base64 当正文糊脸。标成 multimodal_text 走 MultimodalUserBubble。
-                    self.appendCCMessage(chatId: chatId, content: jsonStr,
-                                         contentType: "multimodal_text", context: context)
-                }
+            // 图片：09-23 起和文件走同一条路——.image 段（multimodal_text 那条路是给 user 气泡的，
+            // assistant 节点走它只会糊一屏 base64；08-31 修的是 user 侧那半）
+            if att.isImage, att.imageData != nil {
+                self.appendCCMessage(chatId: chatId, content: "📎 \(att.name)", context: context, file: att)
             } else {
                 // 非图片文件：字节随消息落库（fileData 段），不再只剩一个名字
                 self.appendCCMessage(chatId: chatId, content: "📎 \(att.name)", context: context, file: att)
@@ -1079,9 +1067,13 @@ extension ConversationViewModel {
             context.insert(node)
             node.senderName = "CC Caelum"  // PR-4: 标注 CC 发言者
             node.senderId = "cc-caelum"
-            // 主人发来的非图片文件：字节进 fileData 段（气泡/文章两种模式都画附件卡，可点开/保存）
-            if let file, !file.isImage, let bytes = file.fileData {
-                node.setSegments([.text(content), .fileData(name: file.name, mime: file.mimeType ?? "application/octet-stream", data: bytes)])
+            // 主人发来的图/文件：进 .image / .fileData 段（气泡/文章两种模式都画附件卡，可点开/保存）
+            if let file {
+                if file.isImage, let img = file.imageData {
+                    node.setSegments([.text(content), .image(name: file.name, type: file.mimeType, data: img)])
+                } else if let bytes = file.fileData {
+                    node.setSegments([.text(content), .fileData(name: file.name, mime: file.mimeType ?? "application/octet-stream", data: bytes)])
+                }
             }
             if let parentId, let parent = nodeMap[parentId],
                !parent.childrenIds.contains(nodeId) {
@@ -1365,10 +1357,14 @@ extension ConversationViewModel {
                 node.content = capturedThink.isEmpty
                     ? fullText
                     : "[thinking]\(capturedThink)[/thinking]\(fullText)"
-                // 主人这条回复里带的非图片文件：挂成 fileData 段（09-20，之前只剩个「📎 名字」）
-                if let file = CCBridgeProvider.lastReplyFile, let bytes = file.fileData {
+                // 主人这条回复里带的图/文件：挂成 .image / .fileData 段（09-20 文件、09-23 图片）
+                if let file = CCBridgeProvider.lastReplyFile {
                     CCBridgeProvider.lastReplyFile = nil
-                    node.setSegments([.text(fullText), .fileData(name: file.name, mime: file.mimeType ?? "application/octet-stream", data: bytes)])
+                    if file.isImage, let img = file.imageData {
+                        node.setSegments([.text(fullText), .image(name: file.name, type: file.mimeType, data: img)])
+                    } else if let bytes = file.fileData {
+                        node.setSegments([.text(fullText), .fileData(name: file.name, mime: file.mimeType ?? "application/octet-stream", data: bytes)])
+                    }
                 }
                 streamingText = ""
                 streamingThinkingText = ""
