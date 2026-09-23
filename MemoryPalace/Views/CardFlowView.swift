@@ -2298,6 +2298,12 @@ struct BubbleView: View {
                 }
     }
 
+    /// 等待中：他还没吐一个字、思考链也没来——壳收成小胶囊（09-23）
+    private var waitingOnly: Bool {
+        !isUser && isStreaming && streamingContentText.isEmpty && streamingThinkingText.isEmpty
+            && node.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// 只有图片、没有一个字的多模态消息：图片条在壳外画了，壳本身就别出现（09-23）
     private var imageOnlyMessage: Bool {
         guard isUser, node.contentType == "multimodal_text" else { return false }
@@ -2795,10 +2801,12 @@ struct BubbleView: View {
 
 // PR(usage): 气泡底部 token 数字已移除（统计走 Token 统计页）
             }
-            .padding(.horizontal, imageOnlyMessage ? 0 : bubblePaddingH)
-            .padding(.vertical, imageOnlyMessage ? 0 : bubblePaddingV)
+            // 等待中（思考和正文都还没来）：壳收成小胶囊——18/15 的正文内边距套一颗球和一行字，
+            // 就是兔兔 09-23 截图里「很大一个」。等待本来就是「还没有气泡」，别先出个大框
+            .padding(.horizontal, imageOnlyMessage ? 0 : (waitingOnly ? 12 : bubblePaddingH))
+            .padding(.vertical, imageOnlyMessage ? 0 : (waitingOnly ? 6 : bubblePaddingV))
             .background(
-                RoundedRectangle(cornerRadius: bubbleCornerRadius)
+                RoundedRectangle(cornerRadius: waitingOnly ? 22 : bubbleCornerRadius)
                     .fill(imageOnlyMessage ? Color.clear : (isUser ? Theme.userBubble : (hideAssistantBubble ? Color.clear : Theme.assistantBubble)))
             )
             .overlay(
