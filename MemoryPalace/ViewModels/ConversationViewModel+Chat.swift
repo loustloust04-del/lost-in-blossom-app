@@ -752,6 +752,16 @@ extension ConversationViewModel {
                 guard let self else { return }
                 HapticService.shared.streamingComplete()
                 assistantNode.content = fullText
+                // 主人这条回复里带的图/文件 → .image / .fileData 段（09-24：这条才是「发消息→他回」的正路，
+                // 之前只补在了 regenerate/edit 那条收口上，所以他回你时带的图彻底不显示）
+                if let file = CCBridgeProvider.lastReplyFile {
+                    CCBridgeProvider.lastReplyFile = nil
+                    if file.isImage, let img = file.imageData {
+                        assistantNode.setSegments([.text(fullText), .image(name: file.name, type: file.mimeType, data: img)])
+                    } else if let bytes = file.fileData {
+                        assistantNode.setSegments([.text(fullText), .fileData(name: file.name, mime: file.mimeType ?? "application/octet-stream", data: bytes)])
+                    }
+                }
                 // CC 车道不清全局流式状态（可能是别的 API 对话正在用）
                 if !isCCLane {
                     streamingText = ""
