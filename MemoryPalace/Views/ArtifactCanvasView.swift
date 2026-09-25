@@ -379,9 +379,39 @@ struct CanvasLoadingBar: View {
     }
 }
 
+/// 画布全屏用 window 直挂（09-25）：fullScreenCover 从分页容器里的 chat HC 弹出来，真机上一片白、没按钮、
+/// 切后台回来才显示还会自己弹回（presentation context 被分页容器搅了）。长按浮层早就这么挂，稳。
+@MainActor
+final class ArtifactCanvasPresenter {
+    static let shared = ArtifactCanvasPresenter()
+    private var host: UIHostingController<ArtifactCanvasSheet>?
+
+    func present(_ artifact: ArtifactContent) {
+        guard host == nil,
+              let window = UIApplication.shared.connectedScenes.compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first
+        else { return }
+        let hc = UIHostingController(rootView: ArtifactCanvasSheet(artifact: artifact, onClose: { [weak self] in self?.dismiss() }))
+        hc.view.backgroundColor = .clear
+        hc.view.frame = window.bounds
+        hc.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        hc.view.alpha = 0
+        window.addSubview(hc.view)
+        UIView.animate(withDuration: 0.22) { hc.view.alpha = 1 }
+        host = hc
+        UIApplication.shared.isIdleTimerDisabled = true    // 玩着别锁屏
+    }
+
+    func dismiss() {
+        guard let hc = host else { return }
+        host = nil
+        UIApplication.shared.isIdleTimerDisabled = false
+        UIView.animate(withDuration: 0.18, animations: { hc.view.alpha = 0 }) { _ in hc.view.removeFromSuperview() }
+    }
+}
+
 struct ArtifactCanvasSheet: View {
     let artifact: ArtifactContent
-    @Environment(\.dismiss) private var dismiss
+    var onClose: () -> Void = {}
     @State private var reloadTick = 0
     @State private var loaded = false
     @State private var progress: Double = 0
@@ -417,7 +447,7 @@ struct ArtifactCanvasSheet: View {
 
             // 顶栏：自己让出状态栏，关闭键做成实心圆——在任何页面上都看得见
             HStack(spacing: 8) {
-                Button { dismiss() } label: {
+                Button { onClose() } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(.white)
@@ -467,9 +497,7 @@ struct ArtifactCanvasSheet: View {
         }
         .ignoresSafeArea()
         .onAppear {
-            UIApplication.shared.isIdleTimerDisabled = true    // 玩着别锁屏
             DispatchQueue.main.asyncAfter(deadline: .now() + 6) { if !loaded { slow = true } }
         }
-        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
     }
 }

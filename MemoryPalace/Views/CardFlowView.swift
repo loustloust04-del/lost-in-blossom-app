@@ -2837,8 +2837,8 @@ struct BubbleView: View {
                         language: artifact.type.label
                     )
                     ArtifactCardView(artifact: artifact) {
-                        detectedArtifact = artifact
-                        showArtifactCanvas = true
+                        // 09-25：不走 fullScreenCover（分页容器里弹出来一片白、没按钮），直接挂 window
+                        ArtifactCanvasPresenter.shared.present(artifact)
                     }
                 }
 
@@ -2989,12 +2989,6 @@ struct BubbleView: View {
         // 即 .contextMenu 自己附着的那个 view 的 frame。
         .sheet(isPresented: $showFolderPicker) {
             FolderPickerSheet(node: node, profileId: node.profileId)
-        }
-        // 09-23 画布升级：小游戏要真全屏（半页 sheet 玩不了），不是 .sheet
-        .fullScreenCover(isPresented: $showArtifactCanvas) {
-            if let artifact = detectedArtifact {
-                ArtifactCanvasSheet(artifact: artifact)
-            }
         }
     }
 }
