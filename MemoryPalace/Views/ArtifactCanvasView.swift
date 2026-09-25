@@ -226,8 +226,9 @@ struct ArtifactCanvasView: UIViewRepresentable {
     let htmlContent: String
     var interactive: Bool = true
     var onLoaded: (() -> Void)? = nil
+    var onProgress: ((Double) -> Void)? = nil
 
-    func makeCoordinator() -> Coordinator { Coordinator(onLoaded: onLoaded) }
+    func makeCoordinator() -> Coordinator { Coordinator(onLoaded: onLoaded, onProgress: onProgress) }
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -239,6 +240,11 @@ struct ArtifactCanvasView: UIViewRepresentable {
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
         webView.navigationDelegate = context.coordinator
+        // 加载进度（兔兔 09-25：「白屏加载不出来，想要个进度条」）——estimatedProgress 是 KVO 的
+        context.coordinator.progressObs = webView.observe(\.estimatedProgress, options: [.new]) { wv, _ in
+            let p = wv.estimatedProgress
+            DispatchQueue.main.async { context.coordinator.onProgress?(p) }
+        }
         if !interactive {
             // 卡片里的活预览：只看不碰，点击穿透给卡片去开全屏
             webView.isUserInteractionEnabled = false
@@ -263,8 +269,10 @@ struct ArtifactCanvasView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         var loadedHTML: String? = nil
         var revealed = false
+        var progressObs: NSKeyValueObservation?
         let onLoaded: (() -> Void)?
-        init(onLoaded: (() -> Void)?) { self.onLoaded = onLoaded }
+        let onProgress: ((Double) -> Void)?
+        init(onLoaded: (() -> Void)?, onProgress: ((Double) -> Void)?) { self.onLoaded = onLoaded; self.onProgress = onProgress }
         func reveal() { guard !revealed else { return }; revealed = true; onLoaded?() }
         // didCommit = 首批内容已到，就露出；不等所有外链资源 didFinish
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { reveal() }
@@ -279,17 +287,19 @@ struct ArtifactCardView: View {
     let artifact: ArtifactContent
     let onOpen: () -> Void
     @State private var previewLoaded = false
+    @State private var previewProgress: Double = 0
 
     var body: some View {
         VStack(spacing: 0) {
             // 活预览：真的在跑，只是不能碰（09-23 画布升级：主人做的小游戏要一眼看见长什么样）
-            ZStack {
-                ArtifactCanvasView(htmlContent: artifact.renderedHTML, interactive: false) {
+            ZStack(alignment: .top) {
+                ArtifactCanvasView(htmlContent: artifact.renderedHTML, interactive: false, onLoaded: {
                     withAnimation(.easeOut(duration: 0.25)) { previewLoaded = true }
-                }
+                }, onProgress: { previewProgress = $0 })
                 .opacity(previewLoaded ? 1 : 0)
                 if !previewLoaded {
-                    ProgressView().tint(Theme.textMuted)
+                    CanvasLoadingBar(progress: previewProgress, hint: nil)
+                        .padding(.top, 8)
                 }
                 // 底部渐隐，暗示「还有」
                 LinearGradient(colors: [.clear, Theme.mainBg.opacity(0.85)], startPoint: .center, endPoint: .bottom)
@@ -303,7 +313,7 @@ struct ArtifactCardView: View {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(Theme.branchIndicator.opacity(0.12))
                         .frame(width: 30, height: 30)
-                    Image(systemName: artifact.isInteractive ? "gamecontroller" : artifact.type.icon)
+                    Image(systemName: artifact.isInteractive ? "wand.and.stars" : artifact.type.icon)
                         .font(.system(size: 13))
                         .foregroundColor(Theme.branchIndicator)
                 }
@@ -342,43 +352,102 @@ struct ArtifactCardView: View {
 
 // MARK: - Artifact Canvas Sheet
 
+/// 画布加载条：进度 + 卡住时的提示（09-25 兔兔：「还是会白屏加载不出来，希望有个进度条」）
+struct CanvasLoadingBar: View {
+    let progress: Double
+    let hint: String?
+    var body: some View {
+        VStack(spacing: 6) {
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Theme.textMuted.opacity(0.18))
+                    Capsule().fill(Theme.branchIndicator)
+                        .frame(width: max(6, g.size.width * CGFloat(min(1, max(0.04, progress)))))
+                        .animation(.easeOut(duration: 0.25), value: progress)
+                }
+            }
+            .frame(height: 4)
+            .padding(.horizontal, 24)
+            if let hint {
+                Text(hint)
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.textMuted)
+            }
+        }
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity)
+    }
+}
+
 struct ArtifactCanvasSheet: View {
     let artifact: ArtifactContent
     @Environment(\.dismiss) private var dismiss
     @State private var reloadTick = 0
     @State private var loaded = false
+    @State private var progress: Double = 0
+    @State private var slow = false          // 6s 还没完 → 提示外网资源
+
+    /// 分页容器里 fullScreenCover 的安全区不可靠（顶栏被灵动岛盖住＝兔兔「没有退出键」）：
+    /// 自己从 window 读，整页 ignoresSafeArea 后手动让出
+    private var topInset: CGFloat {
+        UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.safeAreaInsets.top ?? 59
+    }
+    private var bottomInset: CGFloat {
+        UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.safeAreaInsets.bottom ?? 34
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
+        ZStack(alignment: .top) {
+            Color(UIColor.systemBackground).ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                Color.clear.frame(height: topInset + 44)   // 顶栏占位（顶栏本体在 overlay，永远在最上层）
+                ZStack(alignment: .top) {
+                    ArtifactCanvasView(htmlContent: artifact.renderedHTML, onLoaded: { loaded = true }, onProgress: { progress = $0 })
+                        .id(reloadTick)
+                    if !loaded {
+                        CanvasLoadingBar(progress: progress,
+                                         hint: slow ? (artifact.usesRemoteResources ? "还在等外网资源…可能加载不到" : "还在加载…") : nil)
+                            .padding(.top, 12)
+                    }
+                }
+                .padding(.bottom, bottomInset)
+            }
+            .ignoresSafeArea()
+
+            // 顶栏：自己让出状态栏，关闭键做成实心圆——在任何页面上都看得见
+            HStack(spacing: 8) {
                 Button { dismiss() } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(Theme.textMuted)
-                        .frame(width: 32, height: 32)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(Color.black.opacity(0.55)))
                 }
                 .buttonStyle(.plain)
 
                 Spacer()
 
                 HStack(spacing: 6) {
-                    Image(systemName: artifact.isInteractive ? "gamecontroller" : artifact.type.icon)
+                    Image(systemName: artifact.isInteractive ? "wand.and.stars" : artifact.type.icon)
                         .font(.system(size: 12))
-                        .foregroundColor(Theme.textMuted)
                     Text(artifact.title)
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(Theme.textPrimary)
                         .lineLimit(1)
                 }
+                .foregroundColor(Theme.textPrimary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(Color(UIColor.systemBackground).opacity(0.85)))
 
                 Spacer()
 
-                // 重开一局（小游戏最常按的）
-                Button { reloadTick += 1; loaded = false } label: {
+                Button { reloadTick += 1; loaded = false; progress = 0; slow = false } label: {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 14))
-                        .foregroundColor(Theme.textMuted)
-                        .frame(width: 32, height: 32)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(Color.black.opacity(0.55)))
                 }
                 .buttonStyle(.plain)
 
@@ -387,25 +456,20 @@ struct ArtifactCanvasSheet: View {
                     ShareLink(item: artifact.code, subject: Text(artifact.title)) { Label("分享源码", systemImage: "square.and.arrow.up") }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 14))
-                        .foregroundColor(Theme.textMuted)
-                        .frame(width: 32, height: 32)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(Color.black.opacity(0.55)))
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-
-            Divider().opacity(0.2)
-
-            ZStack {
-                ArtifactCanvasView(htmlContent: artifact.renderedHTML) { loaded = true }
-                    .id(reloadTick)
-                if !loaded { ProgressView().tint(Theme.textMuted) }
-            }
-            .ignoresSafeArea(.keyboard)
+            .padding(.top, topInset + 5)
         }
-        .background(Color(UIColor.systemBackground))
-        .onAppear { UIApplication.shared.isIdleTimerDisabled = true }    // 玩着别锁屏
+        .ignoresSafeArea()
+        .onAppear {
+            UIApplication.shared.isIdleTimerDisabled = true    // 玩着别锁屏
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { if !loaded { slow = true } }
+        }
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
     }
 }
