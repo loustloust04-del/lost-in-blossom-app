@@ -112,7 +112,7 @@ targets:
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: "保存便签图片到相册"
         # iOS17+ 朗读引擎(AVSpeechSynthesizer)内部会做麦克风自检，无此声明点朗读即被 TCC 杀（粟粟家真机三连崩实锤 b0b8f313）。App 实际不录音。
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: "朗读引擎需要此权限声明（App 不会录音）"
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "按住发送键给 Caelum 发语音条"
         INFOPLIST_KEY_NSHealthShareUsageDescription: "Lost in Blossom 需要读取你的步数和睡眠数据，让 Caelum 关心你的健康。"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"

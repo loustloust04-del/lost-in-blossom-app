@@ -1125,6 +1125,7 @@ struct ChatInputBar: View {
             pendingFileName: pendingFileName,
             pendingAttachments: pendingAttachments,
             onSend: { text in send(text) },
+            onSendVoice: { url, dur in sendVoice(url: url, duration: dur) },
             onCancelStream: { viewModel.cancelAssistantTurn(context: modelContext) },
             onStickerTap: onStickerTap,
             onModelTap: { showModelPicker.toggle() },
@@ -1209,6 +1210,19 @@ struct ChatInputBar: View {
     }
 
     /// 返回 true 表示发送成功（子 view 应清空 text），false = 预算被拦（text 保留）
+    /// 语音条（09-25）：录完松手就发；正文空，原音落库挂 audioRef，hub 转写
+    private func sendVoice(url: URL, duration: Double) {
+        if providerManager.provider(for: currentModel)?.type == .ccBridge,
+           !CCBridgeWebSocketClient.shared.isConnected {
+            showCCDisconnectedAlert = true
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
+        let prof = profileManager?.currentProfile ?? Profile(name: "", emoji: "", description: "", userName: "你", assistantName: "AI")
+        let preset = presetManager?.preset(byId: prof.presetId) ?? Preset.balanced
+        _ = viewModel.sendMessage("", voice: (url: url, duration: duration), model: currentModel, profile: prof, preset: preset, providerManager: providerManager, context: modelContext)
+    }
+
     private func send(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let imageData = pendingImageData.wrappedValue
@@ -1318,6 +1332,10 @@ private struct InputFieldContainer: View {
     @Binding var pendingFileName: String?
     @Binding var pendingAttachments: [PendingChatAttachment]
     let onSend: (String) -> Bool
+    var onSendVoice: ((URL, Double) -> Void)? = nil
+    @ObservedObject private var recorder = VoiceRecorder.shared
+    @State private var voiceStarting = false
+    @State private var voiceCancelArmed = false
     let onCancelStream: () -> Void
     let onStickerTap: (() -> Void)?
     let onModelTap: () -> Void
@@ -1409,6 +1427,23 @@ private struct InputFieldContainer: View {
         }()
         #endif
         return AnyView(VStack(spacing: 0) {
+            // ── 录音中（09-25）：计时 + 提示，压在输入框上方 ──────────────
+            if recorder.isRecording {
+                HStack(spacing: 8) {
+                    Circle().fill(Theme.danger).frame(width: 8, height: 8)
+                        .opacity(0.4 + Double(recorder.level) * 0.6)
+                    Text(String(format: "%d:%02d", Int(recorder.elapsed) / 60, Int(recorder.elapsed) % 60))
+                        .font(.system(size: 13, weight: .medium).monospacedDigit())
+                        .foregroundColor(Theme.textPrimary)
+                    Text(voiceCancelArmed ? "松手取消" : "松手发送 · 上滑取消")
+                        .font(.system(size: 12))
+                        .foregroundColor(voiceCancelArmed ? Theme.danger : Theme.textMuted)
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .transition(.opacity)
+            }
             // ── 多附件条（09-12）：缩略图 / 文件块横排，各自可删 ──────────────
             if !pendingAttachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -1615,23 +1650,53 @@ private struct InputFieldContainer: View {
                 // 粟粟用的是 Theme.branchIndicator（她注释叫「薄荷发送」），饱和度够。
                 // 她也不拆两个按钮：canSend ? arrow.up : waveform，底色 canSend 才填，
                 // 否则 Color.clear——这样空↔有字切换不会闪。
+                // 语音条（09-25）：空输入时这颗 waveform 不再是摆设——按住录、松手发、上滑取消
+                let voiceMode = !canSend && !isStreaming && onSendVoice != nil
                 Button(action: triggerSend) {
-                    Image(systemName: isStreaming ? "stop.fill" : (canSend ? "arrow.up" : "waveform"))
+                    Image(systemName: isStreaming ? "stop.fill" : (canSend ? "arrow.up" : (recorder.isRecording ? "mic.fill" : "waveform")))
                         .contentTransition(.symbolEffect(.replace))
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(canSend || isStreaming ? .white : Theme.textMuted.opacity(0.55))
+                        .foregroundColor(canSend || isStreaming || recorder.isRecording ? .white : Theme.textMuted.opacity(0.55))
                         .frame(width: 32, height: 32)
                         .background(
                             Circle().fill(
                                 isStreaming ? Theme.danger
-                                            : canSend ? Theme.branchIndicator : Color.clear
+                                            : canSend ? Theme.branchIndicator
+                                            : recorder.isRecording ? Theme.danger : Color.clear
                             )
+                            .scaleEffect(recorder.isRecording ? 1 + CGFloat(recorder.level) * 0.35 : 1)
                             .animation(.easeInOut(duration: 0.15), value: isStreaming)
                             .animation(.easeInOut(duration: 0.15), value: canSend)
+                            .animation(.easeOut(duration: 0.08), value: recorder.level)
                         )
                 }
                 .buttonStyle(.plain)
-                .disabled(!canSend && !isStreaming)
+                .disabled(!canSend && !isStreaming && !voiceMode)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { g in
+                            guard voiceMode || recorder.isRecording else { return }
+                            if !recorder.isRecording && !voiceStarting {
+                                voiceStarting = true
+                                Task { @MainActor in
+                                    let ok = await recorder.start()
+                                    voiceStarting = false
+                                    if ok { HapticService.shared.longPress() }
+                                    else if let e = recorder.lastError { ToastCenter.shared.show(e) }
+                                }
+                            }
+                            voiceCancelArmed = g.translation.height < -60   // 上滑超过 60pt = 松手取消
+                        }
+                        .onEnded { _ in
+                            guard recorder.isRecording || voiceStarting else { return }
+                            defer { voiceCancelArmed = false }
+                            if voiceCancelArmed { recorder.cancel(); return }
+                            if let r = recorder.stop() {
+                                onSendVoice?(r.url, r.duration)
+                                HapticService.shared.sendMessage()
+                            }
+                        }
+                )
                 // 44×44 是 iOS 标准最小点击区，也是整行高度的下限——
                 // 兔兔报「输入框太细」的根因：我上一刀只搬了粟粟里层那个 32 的圆，
                 // 没搬她外面这层 44（CardFlowView:2035），行高就少了 8pt。

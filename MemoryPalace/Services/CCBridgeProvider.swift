@@ -138,6 +138,7 @@ final class CCBridgeProvider: BaseChatProvider {
         var textContent = lastUser.content
         var images: [[String: String]] = []
         var files: [[String: String]] = []
+        var audio: [[String: String]] = []
         if let data = lastUser.content.data(using: .utf8),
            let blocks = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
             var textParts: [String] = []
@@ -150,6 +151,9 @@ final class CCBridgeProvider: BaseChatProvider {
                               let b64 = source["data"] as? String,
                               let mime = source["media_type"] as? String {
                         images.append(["b64": b64, "mime": mime])
+                    } else if type == "audio", let b64 = block["data"] as? String {
+                        // 语音条（09-25）：hub 收 audio:[{b64,ext}] → ffmpeg → 转写并进正文
+                        audio.append(["b64": b64, "ext": block["ext"] as? String ?? "m4a"])
                     } else if type == "file",
                               let b64 = block["data"] as? String {
                         // 非图文件：base64 原始字节 → hub saveInboundFiles 落盘，
@@ -160,7 +164,7 @@ final class CCBridgeProvider: BaseChatProvider {
                     }
                 }
             }
-            if !textParts.isEmpty || !images.isEmpty || !files.isEmpty {
+            if !textParts.isEmpty || !images.isEmpty || !files.isEmpty || !audio.isEmpty {
                 textContent = textParts.joined(separator: "\n")
             }
         }
@@ -177,6 +181,9 @@ final class CCBridgeProvider: BaseChatProvider {
         }
         if !files.isEmpty {
             payload["files"] = files
+        }
+        if !audio.isEmpty {
+            payload["audio"] = audio
         }
         if let ccSession, !ccSession.isEmpty {
             payload["session_name"] = ccSession
