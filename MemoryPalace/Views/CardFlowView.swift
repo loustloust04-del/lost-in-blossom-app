@@ -2372,8 +2372,18 @@ struct BubbleView: View {
     /// 只有图片、没有一个字的多模态消息：图片条在壳外画了，壳本身就别出现（09-23）
     private var imageOnlyMessage: Bool {
         guard isUser, node.contentType == "multimodal_text" else { return false }
+        if voiceOnlyMessage { return true }   // 纯语音同理：胶囊就是气泡，壳不出（09-25）
         let mm = MultimodalUserBubble.parse(node.content)
         return !mm.images.isEmpty && mm.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && mm.fileNames.isEmpty
+    }
+
+    /// 她发的纯语音条：只有 audioRef 段、正文只是「（语音 N 秒）」占位（09-25）
+    private var voiceOnlyMessage: Bool {
+        guard isUser, let segs = node.segments,
+              segs.contains(where: { if case .audioRef = $0 { return true } else { return false } }) else { return false }
+        let mm = MultimodalUserBubble.parse(node.content)
+        let t = mm.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return mm.images.isEmpty && mm.fileNames.isEmpty && (t.isEmpty || t.hasPrefix("（语音"))
     }
 
     /// [流式轻渲染] 把正在生成的文本切成「定型部分」和「正在长的最后一段」：
@@ -2659,6 +2669,8 @@ struct BubbleView: View {
                             regexScripts: regexScripts,
                             isUser: true
                         )
+                    } else if node.contentType == "multimodal_text", voiceOnlyMessage {
+                        EmptyView()   // 纯语音：正文占位不画，胶囊在下面（09-25）
                     } else if node.contentType == "multimodal_text" {
                         MultimodalUserBubble(
                             content: node.content,

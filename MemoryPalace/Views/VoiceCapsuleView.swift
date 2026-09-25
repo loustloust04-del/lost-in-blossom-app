@@ -17,33 +17,51 @@ struct VoiceCapsuleView: View {
     private var isPlaying: Bool { VoiceMessagePlayer.shared.playingId == path }
     private var progress: Double { isPlaying ? VoiceMessagePlayer.shared.progress : 0 }
 
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: url == nil ? "speaker.slash" : (isPlaying ? "pause.fill" : "play.fill"))
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(url == nil ? Theme.textMuted.opacity(0.5) : Theme.branchIndicator)
-                .frame(width: 16)
+    /// 市面通用做法（09-25 兔兔：「照着已经成为习惯的方案」）：宽度随时长长（3s→短，60s→接近气泡上限）；
+    /// 播放键 + 一排静态波形条 + 时长；播放时波形按进度着色。她的用她气泡的颜色，他的用助手气泡色。
+    private var barWidth: CGFloat {
+        let secs = max(1, min(60, duration ?? 3))
+        return 60 + CGFloat(secs) / 60 * 150            // 60…210pt
+    }
+    private var bars: [CGFloat] {
+        // 用路径当种子生成一排固定的伪波形：同一条每次长得一样
+        var x = UInt64(truncatingIfNeeded: path.hashValue) &+ 0x9E3779B97F4A7C15
+        return (0..<Int(barWidth / 5)).map { _ in
+            x ^= x << 13; x ^= x >> 7; x ^= x << 17
+            return 4 + CGFloat(x % 100) / 100 * 12       // 4…16pt
+        }
+    }
+    private var tint: Color { isUser ? Theme.branchIndicator : Theme.textPrimary.opacity(0.75) }
 
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: url == nil ? "speaker.slash" : (isPlaying ? "pause.fill" : "play.fill"))
+                .font(.system(size: 15, weight: .bold))
+                .foregroundColor(url == nil ? Theme.textMuted.opacity(0.5) : tint)
+                .frame(width: 18)
+
+            // 波形：进度扫过的那部分实色，其余淡
+            HStack(alignment: .center, spacing: 2) {
+                let arr = bars
+                ForEach(Array(arr.enumerated()), id: \.offset) { i, h in
                     Capsule()
-                        .fill(Theme.textMuted.opacity(0.18))
-                    Capsule()
-                        .fill(Theme.branchIndicator)
-                        .frame(width: max(0, geo.size.width * progress))
+                        .fill(Double(i) / Double(max(1, arr.count)) < progress ? tint : tint.opacity(0.32))
+                        .frame(width: 3, height: h)
                 }
             }
-            .frame(width: 88, height: 3)
+            .frame(width: barWidth, height: 18)
 
             Text(url == nil ? "文件不在了" : durationLabel)
-                .font(.system(size: 11).monospacedDigit())
-                .foregroundColor(Theme.textMuted)
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .foregroundColor(isUser ? Theme.textPrimary.opacity(0.7) : Theme.textMuted)
         }
-        .padding(.horizontal, embedded ? 0 : 12)
-        .frame(height: embedded ? nil : 34)
-        .background(Capsule().fill(embedded ? Color.clear : Theme.accent.opacity(0.55)))
-        .overlay(Capsule().stroke(embedded ? Color.clear : Theme.textMuted.opacity(0.12), lineWidth: 0.5))
-        .contentShape(Capsule())
+        .padding(.horizontal, embedded ? 0 : 14)
+        .padding(.vertical, embedded ? 0 : 9)
+        .background(
+            RoundedRectangle(cornerRadius: 18)
+                .fill(embedded ? Color.clear : (isUser ? Theme.userBubble : Theme.assistantBubble))
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 18))
         .onTapGesture {
             guard let url else { return }
             VoiceMessagePlayer.shared.toggle(url: url, id: path)
