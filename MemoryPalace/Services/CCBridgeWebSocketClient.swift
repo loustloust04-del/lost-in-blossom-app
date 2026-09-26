@@ -664,10 +664,20 @@ final class CCBridgeWebSocketClient: NSObject {
                         name: name, typeDescription: mime, extractedText: "",
                         byteCount: data.count, fileData: data, fileMime: mime)
                 }()
+                // 09-21：hub 现在把思考链也塞进 reply 帧（补发/离线队列同样带），不再只靠前一帧 cc_thinking
+                let embeddedThinking = (obj["thinking"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                 handlersQueue.async { [weak self] in
                     guard let self else { return }
                     if let replyId, self.isReplySeen(replyId) {
-                        return  // 真重复（replay/重投），silently drop
+                        // 真重复（replay/重投），silently drop。
+                        // 如果前一帧 cc_thinking 刚给这条（已处理过的）回复设了 pending，一并清掉，免得串到下一条
+                        if embeddedThinking != nil { self.pendingThinking = nil }
+                        return
+                    }
+                    // 帧里自带思考链 → 以它为准（cc_thinking 那帧可能丢了，也可能压根没发：补发路径）。
+                    // 在 handlersQueue 上直接写：与 consumePendingThinking 同一串行队列
+                    if let t = embeddedThinking {
+                        self.pendingThinking = CCThinkingBlock(thinking: t, sessionId: "", timestamp: Date())
                     }
                     // Dispatch the attachment BEFORE the reply. Both land on the serial
                     // main queue, so enqueuing the attachment first guarantees pendingAttachment
