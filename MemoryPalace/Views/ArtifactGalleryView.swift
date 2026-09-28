@@ -17,6 +17,15 @@ struct ArtifactGalleryView: View {
     }
     @State private var items: [Item] = []
     @State private var loading = true
+    @State private var editing = false
+    /// 从这里移走的（只是不在画廊里显示，聊天记录不动）——UserDefaults 存 node id
+    @State private var hidden: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "galleryHidden.v1") ?? [])
+
+    private var visible: [Item] { items.filter { !hidden.contains($0.id) } }
+    private func hide(_ id: String) {
+        withAnimation(.easeOut(duration: 0.2)) { _ = hidden.insert(id) }
+        UserDefaults.standard.set(Array(hidden), forKey: "galleryHidden.v1")
+    }
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
@@ -25,7 +34,7 @@ struct ArtifactGalleryView: View {
             Group {
                 if loading {
                     ProgressView().tint(Theme.textMuted)
-                } else if items.isEmpty {
+                } else if visible.isEmpty {
                     VStack(spacing: 10) {
                         Image(systemName: "wand.and.stars")
                             .font(.system(size: 34))
@@ -40,9 +49,12 @@ struct ArtifactGalleryView: View {
                 } else {
                     ScrollView {
                         LazyVGrid(columns: columns, spacing: 12) {
-                            ForEach(items) { item in
-                                GalleryCard(item: item)
-                                    .onTapGesture { ArtifactCanvasPresenter.shared.present(item.artifact) }
+                            ForEach(visible) { item in
+                                GalleryCard(item: item, editing: editing, onHide: { hide(item.id) })
+                                    .onTapGesture { if !editing { ArtifactCanvasPresenter.shared.present(item.artifact) } }
+                                    .contextMenu {
+                                        Button(role: .destructive) { hide(item.id) } label: { Label("从这里移走", systemImage: "trash") }
+                                    }
                             }
                         }
                         .padding(16)
@@ -58,7 +70,12 @@ struct ArtifactGalleryView: View {
                     Button { dismiss() } label: { Image(systemName: "xmark").foregroundColor(Theme.textMuted) }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Text("\(items.count) 个").font(.system(size: 12)).foregroundColor(Theme.textMuted)
+                    HStack(spacing: 10) {
+                        Text("\(visible.count) 个").font(.system(size: 12)).foregroundColor(Theme.textMuted)
+                        Button(editing ? "完成" : "编辑") { withAnimation { editing.toggle() } }
+                            .font(.system(size: 14, weight: editing ? .semibold : .regular))
+                            .foregroundColor(Theme.branchIndicator)
+                    }
                 }
             }
         }
@@ -96,9 +113,12 @@ struct ArtifactGalleryView: View {
 
 private struct GalleryCard: View {
     let item: ArtifactGalleryView.Item
+    var editing: Bool = false
+    var onHide: () -> Void = {}
     @State private var loaded = false
 
     var body: some View {
+        ZStack(alignment: .topTrailing) {
         VStack(alignment: .leading, spacing: 0) {
             ZStack {
                 ArtifactCanvasView(htmlContent: item.artifact.renderedHTML, interactive: false, onLoaded: {
@@ -135,5 +155,20 @@ private struct GalleryCard: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .contentShape(Rectangle())
+
+        // 编辑态：右上角 ×，一点移走（长按卡片也有同一项）
+        if editing {
+            Button(action: onHide) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(Color.black.opacity(0.6)))
+            }
+            .buttonStyle(.plain)
+            .padding(6)
+            .transition(.scale.combined(with: .opacity))
+        }
+        }
     }
 }
