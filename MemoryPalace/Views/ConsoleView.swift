@@ -32,6 +32,7 @@ struct ConsoleView: View {
     @State private var healthKit = HealthKitService()
     @State private var vitalsData: VitalsResponse? = nil
     @State private var showMemoBoard: Bool = false
+    @State private var showGallery: Bool = false     // 他做给你的小页面（09-28）
     @State private var anniversaries: [AnniversaryClient.Item] = []
     @State private var showAnniversaries: Bool = false
     @State private var murmurs: [MurmurClient.Item] = []
@@ -80,6 +81,7 @@ struct ConsoleView: View {
             Button("取消", role: .cancel) { newTodoText = "" }
             Button("添加") { todo.add(newTodoText); newTodoText = "" }
         }
+        .sheet(isPresented: $showGallery) { ArtifactGalleryView() }
         .sheet(isPresented: $showMemoBoard, onDismiss: {
             Task { latestBoardPost = await BoardClient.fetch().last }
         }) { MemoBoardView() }
@@ -194,7 +196,31 @@ struct ConsoleView: View {
             anniversaryWidget
             worldWidget
             caelumWidget
+            galleryWidget
         }
+    }
+
+    // MARK: - 他做给你的小页面（09-28）
+
+    private var galleryWidget: some View {
+        wideWidget {
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 2).fill(Self.green).frame(width: 3)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "wand.and.stars").font(.system(size: 13)).foregroundColor(Self.greenDeep)
+                        Text("他做给你的").font(.system(size: 14, weight: .medium))
+                            .foregroundColor(Color(red: 66/255, green: 61/255, blue: 55/255))
+                    }
+                    Text("花占い、小游戏、小页面——全收在这儿，点开还能玩")
+                        .font(.system(size: 11)).foregroundColor(Self.textMuted)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.system(size: 13)).foregroundColor(Self.textFaint)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { showGallery = true }
     }
 
     private func sectionLabel(_ t: String) -> some View {
