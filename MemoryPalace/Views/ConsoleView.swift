@@ -33,6 +33,7 @@ struct ConsoleView: View {
     @State private var vitalsData: VitalsResponse? = nil
     @State private var showMemoBoard: Bool = false
     @State private var showGallery: Bool = false     // 他做给你的小页面（09-28）
+    @State private var showGameRoom: Bool = false    // 游戏室（09-28）
     @State private var anniversaries: [AnniversaryClient.Item] = []
     @State private var showAnniversaries: Bool = false
     @State private var murmurs: [MurmurClient.Item] = []
@@ -82,6 +83,7 @@ struct ConsoleView: View {
             Button("添加") { todo.add(newTodoText); newTodoText = "" }
         }
         .sheet(isPresented: $showGallery) { ArtifactGalleryView() }
+        .sheet(isPresented: $showGameRoom) { GameRoomView() }
         .sheet(isPresented: $showMemoBoard, onDismiss: {
             Task { latestBoardPost = await BoardClient.fetch().last }
         }) { MemoBoardView() }
@@ -197,7 +199,29 @@ struct ConsoleView: View {
             worldWidget
             caelumWidget
             galleryWidget
+            gameRoomWidget
         }
+    }
+
+    private var gameRoomWidget: some View {
+        wideWidget {
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 2).fill(Self.green).frame(width: 3)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "dice").font(.system(size: 13)).foregroundColor(Self.greenDeep)
+                        Text("游戏室").font(.system(size: 14, weight: .medium))
+                            .foregroundColor(Color(red: 66/255, green: 61/255, blue: 55/255))
+                    }
+                    Text("他装修的屋子——和他本人对局")
+                        .font(.system(size: 11)).foregroundColor(Self.textMuted)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.system(size: 13)).foregroundColor(Self.textFaint)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { showGameRoom = true }
     }
 
     // MARK: - 他做给你的小页面（09-28）
