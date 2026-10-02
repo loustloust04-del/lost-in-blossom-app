@@ -394,6 +394,8 @@ struct MemoryPalaceApp: App {
         // 路线 B: 1 个 unified container. app lifetime 内不换.
         let container = ProfileManager.makeUnifiedContainer()
         let profiles = ProfileManager.loadProfiles()
+        // 09-29 全文索引（粟粟 S5）：后台回填 + didSave 增量；延迟 3s 不跟启动抢
+        SearchIndexer.shared.start(container: container, profileIds: profiles.map(\.id), delay: 3)
         let lastId = UserDefaults.standard.string(forKey: "lastProfileId") ?? "lost-blossom"
         let current = profiles.first(where: { $0.id == lastId }) ?? profiles.first ?? Profile.seedProfiles[0]
 

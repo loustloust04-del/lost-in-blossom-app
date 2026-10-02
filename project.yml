@@ -61,6 +61,8 @@ targets:
       - package: ZIPFoundation
       - package: SwiftTerm
       - package: SwiftSoup
+      # 全文索引（09-29 收粟粟 S5）：import SQLite3 要链系统 libsqlite3（FTS5 + contentless_delete，iOS 18 自带 3.43+）
+      - sdk: libsqlite3.tbd
     entitlements:
       path: MemoryPalace/MemoryPalaceIOS.entitlements
       properties:

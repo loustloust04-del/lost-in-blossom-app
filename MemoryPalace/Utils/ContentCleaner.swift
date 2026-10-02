@@ -9,10 +9,11 @@ enum ContentCleaner {
     private static let cache = NSCache<NSString, NSString>()
 
     /// Clean all ChatGPT annotation artifacts from text
-    static func clean(_ text: String, cacheKey: String? = nil) -> String {
+    /// - Parameter cached: false = 不读不写缓存（索引回填一次扫几万条，别把缓存冲掉）——粟粟 S5
+    static func clean(_ text: String, cacheKey: String? = nil, cached useCache: Bool = true) -> String {
         // Check cache first
         let key = (cacheKey ?? String(text.hashValue)) as NSString
-        if let cached = cache.object(forKey: key) {
+        if useCache, let cached = cache.object(forKey: key) {
             return cached as String
         }
 
@@ -21,7 +22,7 @@ enum ContentCleaner {
         let hasDagger = text.contains("†")
         let hasTurnRef = text.contains("【turn")
         if !hasPUA && !hasDagger && !hasTurnRef {
-            cache.setObject(text as NSString, forKey: key)
+            if useCache { cache.setObject(text as NSString, forKey: key) }
             return text
         }
 
@@ -55,7 +56,7 @@ enum ContentCleaner {
             )
         }
 
-        cache.setObject(result as NSString, forKey: key)
+        if useCache { cache.setObject(result as NSString, forKey: key) }
         return result
     }
 
@@ -166,5 +167,11 @@ enum ContentCleaner {
             result.replaceSubrange(startRange.lowerBound..<endRange.upperBound, with: "")
         }
         return result
+    }
+
+    /// 看得见的文字：清洗后，非 user 再剥思考链。对话内查找与全文索引同一口径（粟粟 S5）
+    static func visibleText(_ content: String, isUser: Bool, cacheKey: String? = nil, cached: Bool = true) -> String {
+        let cleaned = clean(content, cacheKey: cacheKey, cached: cached)
+        return isUser ? cleaned : extractThinking(from: cleaned).content
     }
 }

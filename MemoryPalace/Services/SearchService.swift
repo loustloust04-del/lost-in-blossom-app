@@ -153,10 +153,28 @@ enum SearchService {
                     // 时间过滤不放进 predicate：SwiftData 对 optional `!=nil && !` 拆包
                     // 和 `localizedStandardContains` 组合时会返回空。先按关键词+角色取出，
                     // 再在 Swift 层按 createTime 过滤。关键词已经把结果缩到很少。
-                    var contentNodes = fetchContentWithKeyword(
-                        context: context, search: search, profileId: scopedProfileId,
-                        hasUser: hasUser, hasAssistant: hasAssistant
-                    )
+                    // 09-29 收粟粟的菜（S5）：全文索引就绪且关键词可索引 → 从索引拿命中 id 再按 id 取节点；
+                    // 否则（索引还在回填 / 纯 emoji 词 / 抛错）整次走旧的逐条扫描
+                    var roles = Set<String>()
+                    if hasUser { roles.insert("user") }
+                    if hasAssistant { roles.insert("assistant") }
+                    var contentNodes: [MessageNode]
+                    if let index = SearchIndexer.shared.readyStore,
+                       let hits = try? index.hits(word: search, profileId: scopedProfileId, roles: roles, scope: scope) {
+                        let ids = hits.map(\.nodeId)
+                        var fetched: [MessageNode] = []
+                        for chunk in stride(from: 0, to: ids.count, by: 400).map({ Array(ids[$0..<min($0 + 400, ids.count)]) }) {
+                            let d = FetchDescriptor<MessageNode>(predicate: #Predicate<MessageNode> { chunk.contains($0.id) })
+                            fetched += (try? context.fetch(d)) ?? []
+                        }
+                        let order = Dictionary(uniqueKeysWithValues: ids.enumerated().map { ($1, $0) })
+                        contentNodes = fetched.filter { !$0.isTrashed }.sorted { (order[$0.id] ?? 0) < (order[$1.id] ?? 0) }
+                    } else {
+                        contentNodes = fetchContentWithKeyword(
+                            context: context, search: search, profileId: scopedProfileId,
+                            hasUser: hasUser, hasAssistant: hasAssistant
+                        )
+                    }
                     if let interval = interval {
                         let s = interval.start
                         let e = interval.end
