@@ -2720,8 +2720,12 @@ struct BubbleView: View {
                         thinkingPreview(staticThinking: thinkingResult?.thinking ?? "")
                     }
                     // Claude v2 导入：按段渲染（每段独立折叠，顺序严格）
+                    // 10-03：他带图的回复，正文段里混着 [thinking]…[/thinking]（老数据），显示时剥掉
                     MessageSegmentsView(
-                        segments: segs,
+                        segments: segs.map { seg in
+                            if case .text(let t) = seg, t.contains("[thinking]") { return .text(ContentCleaner.extractThinking(from: t).content) }
+                            return seg
+                        },
                         selectedFont: selectedFont,
                         fontScale: fontScale,
                         lineSpacingScale: lineSpacingScale,
@@ -2839,8 +2843,8 @@ struct BubbleView: View {
                 // 主人发来的图/文件（.image / .fileData 段）：文章模式原来只在气泡模式画附件条，
                 // 这里补上——不然他 reply(file_path:) 发的文件只剩一行「📎 名字」（兔兔 09-20）
                 if !chatBubbleMode, let segs = node.segments?.hydratedForDisplay(profileId: node.profileId) {
+                    // 10-03 兔兔：图包在气泡里丑——图挪到气泡外面画（见 outsideImages），这里只留文件卡
                     let items: [BubbleAttachmentItem] = segs.compactMap { seg in
-                        if case .image(let n, _, let d) = seg { return .image(name: n, data: d) }
                         if case .fileData(let n, let m, let d) = seg { return .fileData(name: n, mime: m, data: d) }
                         return nil
                     }
@@ -2963,6 +2967,17 @@ struct BubbleView: View {
             .chatReactionBadge(target: ChatReactionTarget(node: node), isUser: isUser)   // 表情回应角标（10-03）
             .if(isUser) { view in
                 view.frame(maxWidth: 500, alignment: .trailing)
+            }
+
+            // 他发来的图：画在气泡**外面**、正文下方（10-03 兔兔「包在气泡里比较丑」）。
+            // 一张 = 按比例的大图（≤240pt 宽、圆角 14，点开全屏可存相册）；多张 = 可横滑长条
+            if !isUser, !chatBubbleMode, let segs = node.segments {
+                let imgs: [(String, Data)] = segs.compactMap { if case .image(let n, _, let d) = $0 { return (n, d) } else { return nil } }
+                if !imgs.isEmpty {
+                    OutsideImages(images: imgs)
+                        .padding(.top, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             // 长按菜单样式（兔兔 09-13 B 包 #7：「能不能新旧可选」）：浮层 = Telegram 式（默认）；
             // 系统 = 原生 contextMenu，反转列表下自带 preview 画正的（不用系统快照，快照会颠倒）

@@ -783,9 +783,9 @@ extension ConversationViewModel {
                 if let file = CCBridgeProvider.lastReplyFile {
                     CCBridgeProvider.lastReplyFile = nil
                     if file.isImage, let img = file.imageData {
-                        assistantNode.setSegments([.text(fullText), .image(name: file.name, type: file.mimeType, data: img)])
+                        assistantNode.setSegments([.text(ContentCleaner.extractThinking(from: fullText).content), .image(name: file.name, type: file.mimeType, data: img)])
                     } else if let bytes = file.fileData {
-                        assistantNode.setSegments([.text(fullText), .fileData(name: file.name, mime: file.mimeType ?? "application/octet-stream", data: bytes)])
+                        assistantNode.setSegments([.text(ContentCleaner.extractThinking(from: fullText).content), .fileData(name: file.name, mime: file.mimeType ?? "application/octet-stream", data: bytes)])
                     }
                 }
                 // CC 车道不清全局流式状态（可能是别的 API 对话正在用）
@@ -1397,9 +1397,9 @@ extension ConversationViewModel {
                 if let file = CCBridgeProvider.lastReplyFile {
                     CCBridgeProvider.lastReplyFile = nil
                     if file.isImage, let img = file.imageData {
-                        node.setSegments([.text(fullText), .image(name: file.name, type: file.mimeType, data: img)])
+                        node.setSegments([.text(ContentCleaner.extractThinking(from: fullText).content), .image(name: file.name, type: file.mimeType, data: img)])
                     } else if let bytes = file.fileData {
-                        node.setSegments([.text(fullText), .fileData(name: file.name, mime: file.mimeType ?? "application/octet-stream", data: bytes)])
+                        node.setSegments([.text(ContentCleaner.extractThinking(from: fullText).content), .fileData(name: file.name, mime: file.mimeType ?? "application/octet-stream", data: bytes)])
                     }
                 }
                 streamingText = ""
