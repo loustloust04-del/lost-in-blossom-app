@@ -1,6 +1,7 @@
 import Foundation
 import PDFKit
 import UniformTypeIdentifiers
+import ZIPFoundation
 
 enum AttachmentTextExtractorError: LocalizedError {
     case unsupported(String)
@@ -69,6 +70,9 @@ enum AttachmentTextExtractor {
         let ext = url.pathExtension.lowercased()
         if type?.conforms(to: .pdf) == true || ext == "pdf" {
             extracted = (try? extractPDF(url: url, name: name)) ?? ""
+        } else if ext == "zip" {
+            // 10-03 兔兔「很多模型其实也能读 zip 吧」：解开、把里面的文本类文件抽出来拼成一份（API 车道就不拒了）
+            extracted = zipText(url: url) ?? ""
         } else if OfficeTextExtractor.supportedExtensions.contains(ext), let raw = rawData {
             // docx / xlsx / pptx：zip 套 xml，原生抽（09-12 多附件线）
             extracted = OfficeTextExtractor.extract(data: raw, ext: ext) ?? ""
@@ -90,6 +94,39 @@ enum AttachmentTextExtractor {
             fileData: rawData,
             fileMime: mime
         )
+    }
+
+    /// zip 里的文本类文件（txt/md/代码/json/csv… 和 docx/xlsx/pptx/pdf）抽出来拼成一份：
+    /// 先列目录，每个文件一段「== 路径 ==」；单个文件 ≤ 200KB、总长到 maxExtractedCharacters 截断；跳过 __MACOSX 和隐藏文件
+    private static func zipText(url: URL) -> String? {
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("zip-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        do { try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+             try FileManager.default.unzipItem(at: url, to: tmp) } catch { return nil }
+        guard let walker = FileManager.default.enumerator(at: tmp, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) else { return nil }
+        var listing: [String] = []
+        var parts: [String] = []
+        var total = 0
+        for case let f as URL in walker {
+            let rel = f.path.replacingOccurrences(of: tmp.path + "/", with: "")
+            if rel.hasPrefix("__MACOSX") || f.lastPathComponent.hasPrefix(".") { continue }
+            guard (try? f.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+            let size = (try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            listing.append("\(rel)（\(size / 1024)KB）")
+            guard total < maxExtractedCharacters, size <= 200_000 else { continue }
+            let e = f.pathExtension.lowercased()
+            var body = ""
+            if e == "pdf" { body = (try? extractPDF(url: f, name: rel)) ?? "" }
+            else if OfficeTextExtractor.supportedExtensions.contains(e), let d = try? Data(contentsOf: f) { body = OfficeTextExtractor.extract(data: d, ext: e) ?? "" }
+            else if isTextFile(type: UTType(filenameExtension: e), extension: e) { body = (try? String(contentsOf: f, encoding: .utf8)) ?? "" }
+            let t = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !t.isEmpty else { continue }
+            parts.append("== \(rel) ==\n\(t)")
+            total += t.count
+        }
+        guard !listing.isEmpty else { return nil }
+        let head = "压缩包里有 \(listing.count) 个文件：\n" + listing.prefix(200).joined(separator: "\n")
+        return parts.isEmpty ? head : head + "\n\n" + parts.joined(separator: "\n\n")
     }
 
     private static func isTextFile(type: UTType?, extension ext: String) -> Bool {
