@@ -147,6 +147,11 @@ enum SearchService {
 
                 // --- 1. Search message content ---
                 var contentByConv: [String: [MatchedNode]] = [:]
+                // 10-03 兔兔「搜索并没有快」：每段计时进面包屑 🔎，按数字修
+                let t0 = CFAbsoluteTimeGetCurrent()
+                var probeIndex = "未就绪"
+                var probeHits = 0
+                var tFetch = 0.0, tMain = 0.0
 
                 if needsContent && !keyword.isEmpty {
                     let search = keyword
@@ -161,6 +166,8 @@ enum SearchService {
                     var contentNodes: [MessageNode]
                     if let index = SearchIndexer.shared.readyStore,
                        let hits = try? index.hits(word: search, profileId: scopedProfileId, roles: roles, scope: scope) {
+                        probeIndex = "索引"
+                        probeHits = hits.count
                         let ids = hits.map(\.nodeId)
                         var fetched: [MessageNode] = []
                         for chunk in stride(from: 0, to: ids.count, by: 400).map({ Array(ids[$0..<min($0 + 400, ids.count)]) }) {
@@ -174,7 +181,9 @@ enum SearchService {
                             context: context, search: search, profileId: scopedProfileId,
                             hasUser: hasUser, hasAssistant: hasAssistant
                         )
+                        probeHits = contentNodes.count
                     }
+                    tFetch = CFAbsoluteTimeGetCurrent() - t0
                     if let interval = interval {
                         let s = interval.start
                         let e = interval.end
@@ -252,6 +261,8 @@ enum SearchService {
                 // 场景极边缘（用户没输关键词却搜内容），直接不跑；时间范围内的 conv 由 title
                 // 路径负责列出。
 
+                tMain = CFAbsoluteTimeGetCurrent() - t0 - tFetch
+                let probeKeyword = keyword
                 // --- 2. Search conversation titles ---
                 var titleConvs: [Conversation] = []
                 if needsTitle {
@@ -312,6 +323,10 @@ enum SearchService {
                 titleBucket.sort(by: sorter)
                 contentBucket.sort(by: sorter)
 
+                let total = CFAbsoluteTimeGetCurrent() - t0
+                DispatchQueue.main.async {
+                    BreadcrumbLog.shared.add("🔎", "搜「\(probeKeyword.prefix(12))」\(probeIndex) 命中\(probeHits) · 取节点\(Int(tFetch*1000))ms · 主线过滤\(Int(tMain*1000))ms · 共\(Int(total*1000))ms → \(titleBucket.count + contentBucket.count)个结果")
+                }
                 continuation.resume(returning: titleBucket + contentBucket)
             }
         }

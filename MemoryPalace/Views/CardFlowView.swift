@@ -406,6 +406,19 @@ struct CardFlowView: View {
                             // 视觉顶的 nav 留白已经算进列表高（见下方 padding(.bottom)），这里只扣输入条那截
                             Color.clear.frame(height: shortConvPad)
                             LazyVStack(spacing: bubbleSpacing) {
+                                // 定位到老消息时窗口没到最新：视觉底出一条「看更新的」，滑到即往下扩
+                                if viewModel.hasMoreBelow {
+                                    Button { withAnimation(.none) { viewModel.expandRenderWindowDown() } } label: {
+                                        Text("看更新的消息")
+                                            .font(.system(size: Theme.F.caption))
+                                            .foregroundColor(Theme.textMuted)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 10)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .flippedUpsideDown()
+                                    .onAppear { viewModel.expandRenderWindowDown() }
+                                }
                                 // [反转列表] 物理顺序 = 视觉倒序：这里第一项是视觉底。
                                 // 哨兵留在物理顶，proxy 回落路径用 scrollTo(anchor: .top)
                                 Color.clear
@@ -657,13 +670,20 @@ struct CardFlowView: View {
                                 scrollHost.holdReading()
                                 return
                             }
-                            // 先无动画跳（让 LazyVStack 加载目标），再动画微调
-                            proxy.scrollTo(nodeId, anchor: .center)
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    proxy.scrollTo(nodeId, anchor: .center)
+                            // 10-03：目标不在渲染窗口里（窗口只画最新 24 条）→ 先把窗口挪到它附近，
+                            // 下一圈 runloop 它画出来了再跳。之前直接 scrollTo 一个还没画的气泡 = 什么都不发生，
+                            // 只能手动往上翻、24 条 24 条地挂——兔兔说的「定位很慢」
+                            let moved = withAnimation(.none) { viewModel.focusRenderWindow(on: nodeId) }
+                            let t = CFAbsoluteTimeGetCurrent()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + (moved ? 0.12 : 0)) {
+                                proxy.scrollTo(nodeId, anchor: .center)
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        proxy.scrollTo(nodeId, anchor: .center)
+                                    }
+                                    viewModel.scrollToNodeId = nil
+                                    BreadcrumbLog.shared.add("📍", "定位\(moved ? "（挪窗口）" : "") \(Int((CFAbsoluteTimeGetCurrent() - t) * 1000))ms")
                                 }
-                                viewModel.scrollToNodeId = nil
                             }
                         }
                     }
@@ -699,7 +719,11 @@ struct CardFlowView: View {
                         if !isAtBottom && !viewModel.currentPath.isEmpty {
                             ScrollToBottomButton(
                                 isVisible: true,
-                                action: { scrollToLastMessage(proxy: proxy, force: true) }
+                                action: {
+                                    // 定位过老消息时窗口没到最新：回底 = 先回到「最新 24 条」窗口
+                                    if viewModel.hasMoreBelow { withAnimation(.none) { viewModel.resetRenderWindow() } }
+                                    scrollToLastMessage(proxy: proxy, force: true)
+                                }
                             )
                             .padding(.trailing, 16)
                             .padding(.bottom, 8)
