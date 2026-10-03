@@ -1358,6 +1358,7 @@ private struct InputFieldContainer: View {
     let onSend: (String) -> Bool
     var onSendVoice: ((URL, Double) -> Void)? = nil
     @ObservedObject private var recorder = VoiceRecorder.shared
+    @State private var quoteDraft = QuoteDraft.shared
     @State private var voiceStarting = false
     @State private var voiceCancelArmed = false
     let onCancelStream: () -> Void
@@ -1452,6 +1453,27 @@ private struct InputFieldContainer: View {
         #endif
         return AnyView(VStack(spacing: 0) {
             // ── 录音中（09-25）：计时 + 提示，压在输入框上方 ──────────────
+            Color.clear.frame(width: 0, height: 0)
+                .onReceive(NotificationCenter.default.publisher(for: .composerInsert)) { n in
+                    if let t = n.userInfo?["text"] as? String { insertFromCanvas(t) }
+                }
+            if let q = quoteDraft.pending {
+                HStack(spacing: 8) {
+                    RoundedRectangle(cornerRadius: 1.5).fill(Theme.branchIndicator).frame(width: 3, height: 28)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("回复 \(q.who)").font(.system(size: 11, weight: .medium)).foregroundColor(Theme.branchIndicator)
+                        Text(q.text).font(.system(size: 12)).foregroundColor(Theme.textMuted).lineLimit(1)
+                    }
+                    Spacer()
+                    Button { quoteDraft.pending = nil } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 16)).foregroundColor(Theme.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .transition(.opacity)
+            }
             if recorder.isRecording {
                 HStack(spacing: 8) {
                     Circle().fill(Theme.danger).frame(width: 8, height: 8)
@@ -1834,6 +1856,12 @@ private struct InputFieldContainer: View {
         .onAppear {
             if text.isEmpty, !initialDraft.isEmpty { text = initialDraft }
         }
+    }
+
+    /// mp.ask 塞进来的话：接在她已经打的字后面（10-03 网页卡的手）
+    func insertFromCanvas(_ t: String) {
+        text = text.isEmpty ? t : text + (text.hasSuffix(" ") ? "" : " ") + t
+        isFocused = true
     }
 
     private func triggerSend() {
@@ -2471,6 +2499,10 @@ struct BubbleView: View {
             HapticService.shared.longPress()
             onNotice?(willPin ? "已钉住" : "已取消钉住")
         })
+        specs.append(MenuActionSpec(title: "引用", systemImage: "arrowshape.turn.up.left") {
+            QuoteDraft.shared.set(from: node, assistantName: UserDefaults.standard.string(forKey: "assistantName") ?? "Caelum")
+            HapticService.shared.longPress()
+        })
         specs.append(MenuActionSpec(title: "复制文本", systemImage: "doc.on.doc") {
             UIPasteboard.general.string = ContentCleaner.clean(node.content, cacheKey: node.id)
             HapticService.shared.copyText()
@@ -2633,6 +2665,10 @@ struct BubbleView: View {
                                                                            textColor: UIColor(Theme.textPrimary)))
                                   }) {
             VStack(alignment: .leading, spacing: 6) {
+                // 引用回复（10-03）：她这条引用了哪句，顶上画一条
+                if isUser, let q = QuoteDraft.quoteOf(node.content) {
+                    QuoteStrip(text: q)
+                }
                 // 流式优化：streaming 时直接读 streamingContentText（绕过 SwiftData），完成后读 node.content
                 let sourceText = isStreaming && !streamingContentText.isEmpty ? streamingContentText : node.content
                 let rawCleaned = ContentCleaner.clean(sourceText, cacheKey: "\(node.id)_\(sourceText.count)")
@@ -2879,7 +2915,7 @@ struct BubbleView: View {
                     )
                     ArtifactCardView(artifact: artifact) {
                         // 09-25：不走 fullScreenCover（分页容器里弹出来一片白、没按钮），直接挂 window
-                        ArtifactCanvasPresenter.shared.present(artifact)
+                        ArtifactCanvasPresenter.shared.present(artifact, conversationId: node.conversationId)
                     }
                 }
 

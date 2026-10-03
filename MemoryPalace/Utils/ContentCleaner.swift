@@ -22,7 +22,8 @@ enum ContentCleaner {
         let hasDagger = text.contains("†")
         let hasTurnRef = text.contains("【turn")
         let hasReaction = text.contains("[回应]")
-        if !hasPUA && !hasDagger && !hasTurnRef && !hasReaction {
+        let hasQuote = text.hasPrefix("[引用]") || text.contains("[/回应]\n[引用]")
+        if !hasPUA && !hasDagger && !hasTurnRef && !hasReaction && !hasQuote {
             if useCache { cache.setObject(text as NSString, forKey: key) }
             return text
         }
@@ -42,6 +43,11 @@ enum ContentCleaner {
         // 1.5 表情回应捎带段（10-03）：只给模型看，气泡/搜索/复制都不显示
         if hasReaction {
             result = result.replacingOccurrences(of: "\\[回应\\][\\s\\S]*?\\[/回应\\]\\n?", with: "", options: .regularExpression)
+        }
+
+        // 1.6 引用前缀（10-03 引用回复）：气泡顶上单独画引用条，正文里不显示
+        if hasQuote {
+            result = result.replacingOccurrences(of: "^\\[引用\\][\\s\\S]*?\\[/引用\\]\\n?", with: "", options: .regularExpression)
         }
 
         // 2. Remove dagger file-line references: 【23†L216-L220】

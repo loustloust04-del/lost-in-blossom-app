@@ -227,11 +227,38 @@ struct ArtifactCanvasView: UIViewRepresentable {
     var interactive: Bool = true
     var onLoaded: (() -> Void)? = nil
     var onProgress: ((Double) -> Void)? = nil
+    /// 网页卡的手（10-03，对照粟粟 442add36 mp.*）：可交互时页面里有 window.mp
+    var conversationId: String? = nil
+    var onAsk: ((String) -> Void)? = nil
 
-    func makeCoordinator() -> Coordinator { Coordinator(onLoaded: onLoaded, onProgress: onProgress) }
+    func makeCoordinator() -> Coordinator {
+        let c = Coordinator(onLoaded: onLoaded, onProgress: onProgress)
+        c.conversationId = conversationId
+        c.onAsk = onAsk
+        return c
+    }
+
+    /// window.mp：
+    ///   mp.ask(text)   把一句话放进她的输入框（画布收起），她改改再发
+    ///   mp.todo(text)  加进她的待办（原生确认框）
+    ///   mp.tell(text)  悄悄记一句，她下次发消息时一起带给他（比如游戏结果、她在页面里选了什么）
+    static let mpBridgeJS = """
+    (function(){
+      function post(cmd, text){ try { window.webkit.messageHandlers.mp.postMessage({cmd, text: String(text||'')}) } catch(e){} }
+      window.mp = {
+        ask(t){ post('ask', t) },
+        todo(t){ post('todo', t) },
+        tell(t){ post('tell', t) },
+      };
+    })();
+    """
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
+        if interactive {
+            config.userContentController.add(context.coordinator, name: "mp")
+            config.userContentController.addUserScript(WKUserScript(source: Self.mpBridgeJS, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
         config.defaultWebpagePreferences.allowsContentJavaScript = true
         config.allowsInlineMediaPlayback = true
         let webView = WKWebView(frame: .zero, configuration: config)
@@ -266,9 +293,40 @@ struct ArtifactCanvasView: UIViewRepresentable {
         }
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var loadedHTML: String? = nil
         var revealed = false
+        var conversationId: String? = nil
+        var onAsk: ((String) -> Void)? = nil
+
+        func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard let b = message.body as? [String: Any], let cmd = b["cmd"] as? String else { return }
+            let text = String((b["text"] as? String ?? "").prefix(500)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return }
+            Task { @MainActor in
+                switch cmd {
+                case "ask":
+                    NotificationCenter.default.post(name: .composerInsert, object: nil, userInfo: ["text": text])
+                    self.onAsk?(text)
+                case "todo":
+                    let alert = UIAlertController(title: "加进待办？", message: text, preferredStyle: .alert)
+                    alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+                    alert.addAction(UIAlertAction(title: "加", style: .default) { _ in
+                        TodoManager.shared.add(text)
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    })
+                    let win = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
+                    var top = win?.rootViewController
+                    while let p = top?.presentedViewController { top = p }
+                    top?.present(alert, animated: true)
+                case "tell":
+                    if let cid = self.conversationId {
+                        ChatReactionStore.shared.note("她在小页面里：\(text)", conversationId: cid)
+                    }
+                default: break
+                }
+            }
+        }
         var progressObs: NSKeyValueObservation?
         let onLoaded: (() -> Void)?
         let onProgress: ((Double) -> Void)?
@@ -386,11 +444,12 @@ final class ArtifactCanvasPresenter {
     static let shared = ArtifactCanvasPresenter()
     private var host: UIHostingController<ArtifactCanvasSheet>?
 
-    func present(_ artifact: ArtifactContent) {
+    func present(_ artifact: ArtifactContent, conversationId: String? = nil) {
         guard host == nil,
               let window = UIApplication.shared.connectedScenes.compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first
         else { return }
-        let hc = UIHostingController(rootView: ArtifactCanvasSheet(artifact: artifact, onClose: { [weak self] in self?.dismiss() }))
+        let hc = UIHostingController(rootView: ArtifactCanvasSheet(artifact: artifact, conversationId: conversationId,
+                                                                   onClose: { [weak self] in self?.dismiss() }))
         hc.view.backgroundColor = .clear
         hc.view.frame = window.bounds
         hc.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -411,6 +470,7 @@ final class ArtifactCanvasPresenter {
 
 struct ArtifactCanvasSheet: View {
     let artifact: ArtifactContent
+    var conversationId: String? = nil
     var onClose: () -> Void = {}
     @State private var reloadTick = 0
     @State private var loaded = false
@@ -433,7 +493,8 @@ struct ArtifactCanvasSheet: View {
             VStack(spacing: 0) {
                 Color.clear.frame(height: topInset + 44)   // 顶栏占位（顶栏本体在 overlay，永远在最上层）
                 ZStack(alignment: .top) {
-                    ArtifactCanvasView(htmlContent: artifact.renderedHTML, onLoaded: { loaded = true }, onProgress: { progress = $0 })
+                    ArtifactCanvasView(htmlContent: artifact.renderedHTML, onLoaded: { loaded = true }, onProgress: { progress = $0 },
+                                       conversationId: conversationId, onAsk: { _ in onClose() })   // ask 了就收起，让她看输入框
                         .id(reloadTick)
                     if !loaded {
                         CanvasLoadingBar(progress: progress,
@@ -500,4 +561,10 @@ struct ArtifactCanvasSheet: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 6) { if !loaded { slow = true } }
         }
     }
+}
+
+
+extension Notification.Name {
+    /// 网页卡 mp.ask：往她的输入框里放一句话
+    static let composerInsert = Notification.Name("composerInsert")
 }

@@ -45,6 +45,14 @@ final class ChatReactionStore {
         defaults.set(outbox, forKey: "chatReactionOutbox")
     }
 
+    /// 通用捎带（10-03 网页卡的手 mp.tell）：一句话等她下次发消息时一起带给他
+    func note(_ text: String, conversationId: String) {
+        var box = outbox[conversationId] ?? []
+        box.append(["note:\(UUID().uuidString)", text])
+        outbox[conversationId] = Array(box.suffix(20))
+        defaults.set(outbox, forKey: "chatReactionOutbox")
+    }
+
     /// 发消息时调用：取出这条对话的待捎带句子，并清空
     func drain(_ conversationId: String) -> [String] {
         let lines = (outbox[conversationId] ?? []).compactMap { $0.count > 1 ? $0[1] : nil }
