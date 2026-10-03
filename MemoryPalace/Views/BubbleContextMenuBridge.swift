@@ -43,6 +43,7 @@ struct BubbleMenuLiftWrapper<Content: View>: View {
     let actions: [MenuActionSpec]
     private let content: () -> Content
     private let previewContent: () -> AnyView
+    private let reactionTarget: ChatReactionTarget?
     @State private var lifted = false
 
     /// previewContent 不传 = 活副本原样渲 content；传了 = 浮层里渲变体
@@ -52,9 +53,11 @@ struct BubbleMenuLiftWrapper<Content: View>: View {
         cornerRadius: Double,
         tailBackdrop: Bool = false,
         actions: [MenuActionSpec],
+        reactionTarget: ChatReactionTarget? = nil,
         @ViewBuilder content: @escaping () -> Content,
         previewContent: (() -> AnyView)? = nil
     ) {
+        self.reactionTarget = reactionTarget
         self.isUser = isUser
         self.cornerRadius = CGFloat(cornerRadius)
         self.tailBackdrop = tailBackdrop
@@ -68,11 +71,12 @@ struct BubbleMenuLiftWrapper<Content: View>: View {
         cornerRadius: Double,
         tailBackdrop: Bool = false,
         actions: [MenuActionSpec],
+        reactionTarget: ChatReactionTarget? = nil,
         previewContent: @escaping () -> AnyView,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.init(isUser: isUser, cornerRadius: cornerRadius, tailBackdrop: tailBackdrop, actions: actions,
-                  content: content, previewContent: previewContent)
+                  reactionTarget: reactionTarget, content: content, previewContent: previewContent)
     }
 
     var body: some View {
@@ -89,7 +93,8 @@ struct BubbleMenuLiftWrapper<Content: View>: View {
                 cornerRadius: cornerRadius,
                 tailBackdrop: tailBackdrop,
                 previewBuilder: previewContent,
-                onMenuVisibleChanged: { lifted = $0 }
+                onMenuVisibleChanged: { lifted = $0 },
+                reactionTarget: reactionTarget
             ))
         }
         #else
@@ -116,6 +121,8 @@ struct BubbleMenuSession {
     let isUser: Bool
     /// 恢复原气泡显示（浮层 dismiss 动画起始帧调用，像素重合防闪白）
     let onRestore: () -> Void
+    /// 表情回应的目标（nil = 不出表情条）
+    var reactionTarget: ChatReactionTarget? = nil
 }
 
 final class BubbleMenuOverlayModel: ObservableObject {
@@ -142,6 +149,7 @@ final class BubbleMenuMarkerView: UIView {
     var tailBackdrop = false
     var previewBuilder: (() -> AnyView)?
     var onMenuVisibleChanged: ((Bool) -> Void)?
+    var reactionTarget: ChatReactionTarget?
     weak var overlayModel: BubbleMenuOverlayModel?
 
     private weak var bridge: BubbleContextMenuBridge?
@@ -171,6 +179,7 @@ struct BubbleMenuMarker: UIViewRepresentable {
     var tailBackdrop = false
     let previewBuilder: () -> AnyView
     var onMenuVisibleChanged: ((Bool) -> Void)? = nil
+    var reactionTarget: ChatReactionTarget? = nil
 
     func makeUIView(context: Context) -> BubbleMenuMarkerView {
         let v = BubbleMenuMarkerView()
@@ -191,6 +200,7 @@ struct BubbleMenuMarker: UIViewRepresentable {
         view.tailBackdrop = tailBackdrop
         view.previewBuilder = previewBuilder
         view.onMenuVisibleChanged = onMenuVisibleChanged
+        view.reactionTarget = reactionTarget
         view.overlayModel = context.environment.bubbleMenuOverlayModel
     }
 }
@@ -249,7 +259,8 @@ final class BubbleContextMenuBridge: NSObject {
             tailBackdrop: marker.tailBackdrop,
             specs: marker.actions,
             isUser: marker.isUser,
-            onRestore: { hide?(false) }
+            onRestore: { hide?(false) },
+            reactionTarget: marker.reactionTarget
         )
         // window 层呈现：压住页级 chrome（顶部玻璃按钮），材质采样到真实内容层。
         // 手势回调必在主线程，assumeIsolated 只是给编译器背书

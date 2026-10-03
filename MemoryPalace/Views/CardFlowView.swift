@@ -2624,6 +2624,7 @@ struct BubbleView: View {
             // Bubble（[B·砖3] iOS 包 BubbleMenuLiftWrapper：长按走自定义浮层，不用系统 contextMenu——
             // 反转列表下系统 lift 快照会颠倒（七月三雷之二）；浮层零件 592074d4 早已进仓，这里接线）
             BubbleMenuLiftWrapper(isUser: isUser, cornerRadius: chatBubbleMode ? bubbleModeCornerRadius : bubbleCornerRadius, actions: useSystemBubbleMenu ? [] : nodeMenuSpecs(),
+                                  reactionTarget: isStreaming ? nil : ChatReactionTarget(node: node),
                                   // round 11：浮层预览换 UITextView 可选字副本（MarkdownUI 不支持 textSelection）
                                   previewContent: {
                                       let raw = ContentCleaner.clean(node.content, cacheKey: node.id)
@@ -2959,6 +2960,7 @@ struct BubbleView: View {
                 }
             }
             }   // BubbleMenuLiftWrapper
+            .chatReactionBadge(target: ChatReactionTarget(node: node), isUser: isUser)   // 表情回应角标（10-03）
             .if(isUser) { view in
                 view.frame(maxWidth: 500, alignment: .trailing)
             }

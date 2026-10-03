@@ -21,7 +21,8 @@ enum ContentCleaner {
         let hasPUA = text.unicodeScalars.contains(where: { $0.value >= 0xE200 && $0.value <= 0xE206 })
         let hasDagger = text.contains("†")
         let hasTurnRef = text.contains("【turn")
-        if !hasPUA && !hasDagger && !hasTurnRef {
+        let hasReaction = text.contains("[回应]")
+        if !hasPUA && !hasDagger && !hasTurnRef && !hasReaction {
             if useCache { cache.setObject(text as NSString, forKey: key) }
             return text
         }
@@ -36,6 +37,11 @@ enum ContentCleaner {
             for scalar in ["\u{E200}", "\u{E201}", "\u{E202}", "\u{E203}", "\u{E204}", "\u{E205}", "\u{E206}"] {
                 result = result.replacingOccurrences(of: scalar, with: "")
             }
+        }
+
+        // 1.5 表情回应捎带段（10-03）：只给模型看，气泡/搜索/复制都不显示
+        if hasReaction {
+            result = result.replacingOccurrences(of: "\\[回应\\][\\s\\S]*?\\[/回应\\]\\n?", with: "", options: .regularExpression)
         }
 
         // 2. Remove dagger file-line references: 【23†L216-L220】

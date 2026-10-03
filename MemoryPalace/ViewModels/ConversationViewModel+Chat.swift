@@ -506,6 +506,8 @@ extension ConversationViewModel {
         // 2. Build content and contentType
         // 附件管线对齐粟粟：content = 用户文字 + [附件] 全文（发给模型），
         // attachmentSegments = 文字段 + 附件卡段（气泡渲染折叠卡片，不再把全文铺进气泡）。
+        // 表情回应捎带（10-03 收粟粟的菜）：这条对话里她点过的回应整箱跟着这条去
+        let text = ChatReactionTarget.wrap(ChatReactionStore.shared.drain(conversation.id), before: text)
         let (userContent, userContentType, attachmentSegments): (String, String, [MessageSegment]?) = {
             // ── 语音条（09-25）：原音落文件库挂 audioRef 段（自己那条可回放）；发给 hub 的是 audio 块 ──
             if let voice, let audioData = try? Data(contentsOf: voice.url) {

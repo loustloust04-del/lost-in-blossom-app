@@ -180,16 +180,48 @@ private struct BubbleMenuOverlayContent: View {
     }
 
     /// 预览框最大高度 = 屏幕可用区扣掉菜单和边距，短消息卡片式钉原位的体量
+    /// 表情条（10-03 表情回应）
+    private static let emojiBarHeight: CGFloat = 50
+    private var emojiBarSpace: CGFloat { session.reactionTarget == nil ? 0 : Self.emojiBarHeight + columnSpacing }
+
     private func maxPreviewHeight(in geo: GeometryProxy) -> CGFloat {
-        max(geo.size.height - topMargin - bottomMargin - estimatedMenuHeight - columnSpacing, 120)
+        max(geo.size.height - topMargin - bottomMargin - emojiBarSpace - estimatedMenuHeight - columnSpacing, 120)
     }
 
     private func displayedColumnHeight(in geo: GeometryProxy) -> CGFloat {
-        min(previewNaturalHeight, maxPreviewHeight(in: geo)) + columnSpacing + estimatedMenuHeight
+        emojiBarSpace + min(previewNaturalHeight, maxPreviewHeight(in: geo)) + columnSpacing + estimatedMenuHeight
+    }
+
+    private func emojiBar(target: ChatReactionTarget) -> some View {
+        let selected = Set(ChatReactionStore.shared.reactions(for: target.nodeId))
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(ChatReactionStore.emojis, id: \.self) { e in
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        dismiss { ChatReactionStore.shared.toggle(e, on: target) }
+                    } label: {
+                        Text(e).font(.system(size: 24))
+                            .frame(width: 38, height: 38)
+                            .background(Circle().fill(selected.contains(e) ? Color.black.opacity(0.10) : Color.clear))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 8)
+        }
+        .frame(height: Self.emojiBarHeight)
+        .frame(maxWidth: 320)
+        .background(Capsule().fill(.regularMaterial).shadow(color: .black.opacity(0.12), radius: 8, y: 2))
+        .clipShape(Capsule())
     }
 
     private func column(origin: CGRect, in geo: GeometryProxy) -> some View {
         VStack(alignment: session.isUser ? .trailing : .leading, spacing: columnSpacing) {
+            if let target = session.reactionTarget {
+                emojiBar(target: target)
+                    .scaleEffect(appeared ? 1 : 0.6, anchor: UnitPoint(x: session.isUser ? 0.85 : 0.15, y: 1))
+            }
             previewBox(origin: origin, in: geo)
             // 自绘菜单按原生 UIMenu 规格逐项对齐（Telegram 路线：菜单归自己管才能和
             // 预览滚动/选字共存不打架——真原生 UIMenu 的"碰外面就收"没有开关，已实测判死）
@@ -255,7 +287,7 @@ private struct BubbleMenuOverlayContent: View {
     /// 钉在原位 y，clamp 进 [topMargin, 底边距] 区间，菜单始终完整在屏内
     private func clampedTop(origin: CGRect, in geo: GeometryProxy) -> CGFloat {
         let maxTop = geo.size.height - bottomMargin - displayedColumnHeight(in: geo)
-        return min(max(origin.minY, topMargin), max(maxTop, topMargin))
+        return min(max(origin.minY - emojiBarSpace, topMargin), max(maxTop, topMargin))
     }
 
     // MARK: - 菜单（自绘，按原生 UIMenu 规格：宽 250 / 行高 44 / 字号 17 / 边距 16 /
