@@ -419,11 +419,12 @@ extension ConversationViewModel {
     /// 返回 true = 已受理（发出或排队）；false = 被 guard 拦下（无对话 / 预算闸 / 空群）。
     /// drainPendingSends 用返回值决定是否把 pending 塞回队列，不静默丢消息。
     @discardableResult
-    func sendMessage(_ text: String, imageData: Data? = nil, fileData: Data? = nil, fileName: String? = nil, attachments: [PendingChatAttachment] = [], voice: (url: URL, duration: Double)? = nil, model: ProviderModel, profile: Profile, preset: Preset, providerManager: ProviderManager, context: ModelContext) -> Bool {
+    func sendMessage(_ rawText: String, imageData: Data? = nil, fileData: Data? = nil, fileName: String? = nil, attachments: [PendingChatAttachment] = [], voice: (url: URL, duration: Double)? = nil, model: ProviderModel, profile: Profile, preset: Preset, providerManager: ProviderManager, context: ModelContext) -> Bool {
         // 清洗零宽字符（iOS输入法切换时偷偷插入）
         // 09-03 兔兔报：😵‍💫 发出去变成 😵💫——旧版把 U+200D 一起删了，
         // 而 ZWJ 正是 emoji 组合序列的粘合剂。改成只删「孤立的」连接符，见 stripStrayInvisibles。
-        let text = Self.stripStrayInvisibles(text)
+        // 10-03：var——发出时会被引用/回应前缀改写（之前在下面又 let 一次 = 重声明，编译挂）
+        var text = Self.stripStrayInvisibles(rawText)
         guard let conversation = selectedConversation else { return false }
 
         // 群聊 V3：串行门控编排（API 车道），不走单聊逻辑
@@ -507,8 +508,8 @@ extension ConversationViewModel {
         // 附件管线对齐粟粟：content = 用户文字 + [附件] 全文（发给模型），
         // attachmentSegments = 文字段 + 附件卡段（气泡渲染折叠卡片，不再把全文铺进气泡）。
         // 表情回应捎带（10-03 收粟粟的菜）：这条对话里她点过的回应整箱跟着这条去
-        let quoted = QuoteDraft.shared.take().map { $0 + "\n" + text } ?? text
-        let text = ChatReactionTarget.wrap(ChatReactionStore.shared.drain(conversation.id), before: quoted)
+        let (quoteTag, reactionLines) = MainActor.assumeIsolated { (QuoteDraft.shared.take(), ChatReactionStore.shared.drain(conversation.id)) }
+        text = ChatReactionTarget.wrap(reactionLines, before: quoteTag.map { $0 + "\n" + text } ?? text)
         let (userContent, userContentType, attachmentSegments): (String, String, [MessageSegment]?) = {
             // ── 语音条（09-25）：原音落文件库挂 audioRef 段（自己那条可回放）；发给 hub 的是 audio 块 ──
             if let voice, let audioData = try? Data(contentsOf: voice.url) {

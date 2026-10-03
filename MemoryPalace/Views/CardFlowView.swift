@@ -2621,6 +2621,36 @@ struct BubbleView: View {
         return specs
     }
 
+    @ViewBuilder private var userImagesOutsideBlock: some View {
+        if isUser, node.contentType == "multimodal_text" {
+            let mm = MultimodalUserBubble.parse(node.content)
+            if !mm.images.isEmpty {
+                let items: [BubbleAttachmentItem] = mm.images.enumerated().map { .image(name: "photo\($0.offset + 1).jpg", data: $0.element) }
+                BubbleAttachmentStrip(items: items, isUser: true)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.bottom, mm.text.isEmpty && mm.fileNames.isEmpty ? 0 : 4)
+            }
+        }
+    }
+
+    /// 一张 = 按比例大图（≤240pt、圆角 14，点开全屏可存相册）；多张 = 可横滑长条
+    @ViewBuilder private var assistantImagesOutsideBlock: some View {
+        if !isUser, !chatBubbleMode, let segs = node.segments {
+            let imgs: [(String, Data)] = segs.compactMap { seg -> (String, Data)? in
+                if case .image(let n, _, let d) = seg { return (n, d) } else { return nil }
+            }
+            if !imgs.isEmpty {
+                OutsideImages(images: imgs)
+                    .padding(.top, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var menuReactionTarget: ChatReactionTarget? { isStreaming ? nil : ChatReactionTarget(node: node) }
+    private var menuSpecsForWrapper: [MenuActionSpec] { useSystemBubbleMenu ? [] : nodeMenuSpecs() }
+    private var wrapperCornerRadius: Double { chatBubbleMode ? bubbleModeCornerRadius : bubbleCornerRadius }
+
     private var articleBody: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 3) {
             // Role label + time（两个都隐藏时整行不 render，避免空 HStack 占位）
@@ -2643,20 +2673,12 @@ struct BubbleView: View {
             }
 
             // 多图消息的图片条画在气泡壳**外面**（粟粟同款：图在上、文字气泡在下；兔兔 09-23 #1）
-            if isUser, node.contentType == "multimodal_text" {
-                let mm = MultimodalUserBubble.parse(node.content)
-                if !mm.images.isEmpty {
-                    let items: [BubbleAttachmentItem] = mm.images.enumerated().map { .image(name: "photo\($0.offset + 1).jpg", data: $0.element) }
-                    BubbleAttachmentStrip(items: items, isUser: true)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        .padding(.bottom, mm.text.isEmpty && mm.fileNames.isEmpty ? 0 : 4)
-                }
-            }
+            userImagesOutsideBlock
 
             // Bubble（[B·砖3] iOS 包 BubbleMenuLiftWrapper：长按走自定义浮层，不用系统 contextMenu——
             // 反转列表下系统 lift 快照会颠倒（七月三雷之二）；浮层零件 592074d4 早已进仓，这里接线）
-            BubbleMenuLiftWrapper(isUser: isUser, cornerRadius: chatBubbleMode ? bubbleModeCornerRadius : bubbleCornerRadius, actions: useSystemBubbleMenu ? [] : nodeMenuSpecs(),
-                                  reactionTarget: isStreaming ? nil : ChatReactionTarget(node: node),
+            BubbleMenuLiftWrapper(isUser: isUser, cornerRadius: wrapperCornerRadius, actions: menuSpecsForWrapper,
+                                  reactionTarget: menuReactionTarget,
                                   // round 11：浮层预览换 UITextView 可选字副本（MarkdownUI 不支持 textSelection）
                                   previewContent: {
                                       let raw = ContentCleaner.clean(node.content, cacheKey: node.id)
@@ -3005,16 +3027,8 @@ struct BubbleView: View {
                 view.frame(maxWidth: 500, alignment: .trailing)
             }
 
-            // 他发来的图：画在气泡**外面**、正文下方（10-03 兔兔「包在气泡里比较丑」）。
-            // 一张 = 按比例的大图（≤240pt 宽、圆角 14，点开全屏可存相册）；多张 = 可横滑长条
-            if !isUser, !chatBubbleMode, let segs = node.segments {
-                let imgs: [(String, Data)] = segs.compactMap { if case .image(let n, _, let d) = $0 { return (n, d) } else { return nil } }
-                if !imgs.isEmpty {
-                    OutsideImages(images: imgs)
-                        .padding(.top, 6)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
+            // 他发来的图：画在气泡**外面**、正文下方（10-03 兔兔「包在气泡里比较丑」）
+            assistantImagesOutsideBlock
             // 长按菜单样式（兔兔 09-13 B 包 #7：「能不能新旧可选」）：浮层 = Telegram 式（默认）；
             // 系统 = 原生 contextMenu，反转列表下自带 preview 画正的（不用系统快照，快照会颠倒）
             .if(useSystemBubbleMenu) { view in
