@@ -1457,6 +1457,10 @@ private struct InputFieldContainer: View {
                 .onReceive(NotificationCenter.default.publisher(for: .composerInsert)) { n in
                     if let t = n.userInfo?["text"] as? String { insertFromCanvas(t) }
                 }
+                .onReceive(NotificationCenter.default.publisher(for: .composerSendNow)) { n in
+                    // 卡片作答：当作她的一条消息直接发（不动她输入框里正在打的字）
+                    if let t = n.userInfo?["text"] as? String { _ = onSend(t) }
+                }
             if let q = quoteDraft.pending {
                 HStack(spacing: 8) {
                     RoundedRectangle(cornerRadius: 1.5).fill(Theme.branchIndicator).frame(width: 3, height: 28)
@@ -2621,6 +2625,20 @@ struct BubbleView: View {
         return specs
     }
 
+    /// 正文 Markdown（缓存解析 + 主题），对话卡片的文字段也用它
+    private func markdownBody(_ text: String, key: String) -> some View {
+        Markdown(MarkdownParseCache.content(nodeId: key, text: text))
+            .markdownTheme(
+                .memoryPalace(
+                    fontName: selectedFont,
+                    scale: CGFloat(fontScale > 0 ? fontScale : 1.0),
+                    lineSpacingScale: CGFloat(lineSpacingScale),
+                    paragraphSpacingScale: CGFloat(paragraphSpacingScale)
+                )
+            )
+            .textSelection(.enabled)
+    }
+
     @ViewBuilder private var userImagesOutsideBlock: some View {
         if isUser, node.contentType == "multimodal_text" {
             let mm = MultimodalUserBubble.parse(node.content)
@@ -2882,17 +2900,15 @@ struct BubbleView: View {
                                     }
                                 }
                             } else {
+                            // 对话卡片（10-04）：他的回复里有 ```card-xxx 就切成「文字 / 卡片」交替画
+                            if !isUser, let segs = ChatCardParser.split(displayText) {
+                                ChatCardSegmentsView(segments: segs, nodeId: node.id) { t in
+                                    markdownBody(BubbleMarkdownSimplifier.simplify(t), key: node.id + "#seg\(t.count)")
+                                }
+                            } else {
                             // round 10：解析走缓存（窗口扩张时后台已预热；未命中就地解析一次）
-                            Markdown(MarkdownParseCache.content(nodeId: node.id, text: isUser ? displayText : BubbleMarkdownSimplifier.simplify(displayText)))
-                                .markdownTheme(
-                                    .memoryPalace(
-                                        fontName: selectedFont,
-                                        scale: CGFloat(fontScale > 0 ? fontScale : 1.0),
-                                        lineSpacingScale: CGFloat(lineSpacingScale),
-                                        paragraphSpacingScale: CGFloat(paragraphSpacingScale)
-                                    )
-                                )
-                                .textSelection(.enabled)
+                            markdownBody(isUser ? displayText : BubbleMarkdownSimplifier.simplify(displayText), key: node.id)
+                            }
                             }
                         }
                     }
