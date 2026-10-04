@@ -880,8 +880,12 @@ struct CardFlowView: View {
             }
             .onAppear {
             CCBridgeWebSocketClient.shared.onAskUserQuestion = { chatId, toolUseId, questions in
+                // 10-04 兔兔「选择卡工具失效了」：老 ask_choice 线的帧不带 chat_id（传进来是空串），
+                // 而弹出条件是「卡属于当前对话才弹」——空串永远不等于任何对话，卡永远不弹。
+                // 没带 chat_id 的就算给她眼前这个对话
+                let cid = chatId.isEmpty ? (viewModel.selectedConversation?.id ?? "") : chatId
                 viewModel.pendingCCQuestion = PendingCCQuestion(
-                    chatId: chatId, toolUseId: toolUseId, questions: questions
+                    chatId: cid, toolUseId: toolUseId, questions: questions
                 )
             }
             // V6：收尾上次被中断的群聊轮次（App 被杀/崩溃留下的 running 僵尸）
