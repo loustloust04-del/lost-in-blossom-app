@@ -501,7 +501,7 @@ struct CardFlowView: View {
                     // 这里只剩 blur + gradient 130pt 的视觉柔化层（z 层：blur < nav HStack）。
                     .overlay(alignment: .top) {
                         ZStack {
-                            VariableBlurView(maxBlurRadius: blurRadius, direction: .blurredTopClearBottom)
+                            EdgeBlurView(edge: .top, maxBlurRadius: blurRadius)   // 10-04 iOS 26 硬边带修复
                             LinearGradient(
                                 stops: [
                                     .init(color: Theme.mainBg, location: 0.0),
@@ -1159,7 +1159,7 @@ struct ChatInputBar: View {
         .contentShape(Rectangle())
         .background(alignment: .bottom) {
             ZStack {
-                VariableBlurView(maxBlurRadius: blurRadius, direction: .blurredBottomClearTop)
+                EdgeBlurView(edge: .bottom, maxBlurRadius: blurRadius)
                 LinearGradient(
                     stops: [
                         .init(color: Theme.mainBg.opacity(0), location: 0.0),
