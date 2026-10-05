@@ -341,9 +341,10 @@ final class AnthropicProvider: BaseChatProvider {
                 activeBlocks[index]?.accumulated += text
                 // 只有 text block 才通过 onToken 实时更新
                 if let block = activeBlocks[index], case .text = block.kind {
-                    DispatchQueue.main.async { [self] in
-                        streamingContent += text
-                        onToken?(text)
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { return }
+                        self.streamingContent += text
+                        self.onToken?(text)
                     }
                 }
             case "input_json_delta":
@@ -354,9 +355,10 @@ final class AnthropicProvider: BaseChatProvider {
                 if let text = delta?["text"] as? String, !text.isEmpty {
                     // fallback: 仅有 text 字段而无 type 的情况（兼容旧版 Anthropic API）
                     activeBlocks[index]?.accumulated += text
-                    DispatchQueue.main.async { [self] in
-                        streamingContent += text
-                        onToken?(text)
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { return }
+                        self.streamingContent += text
+                        self.onToken?(text)
                     }
                 }
             }
@@ -438,21 +440,23 @@ final class AnthropicProvider: BaseChatProvider {
                 if case .toolResult = $0 { return true }
                 return false
             }
-            DispatchQueue.main.async { [self] in
-                isStreaming = false
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.isStreaming = false
                 if hasTool {
-                    onSegmentsCallback?(allSegs)
+                    self.onSegmentsCallback?(allSegs)
                 }
-                onComplete?(streamingContent, finalUsage)
+                self.onComplete?(self.streamingContent, self.finalUsage)
             }
 
         case "error":
             if let err = obj["error"] as? [String: Any],
                let message = err["message"] as? String {
-                DispatchQueue.main.async { [self] in
-                    isStreaming = false
-                    error = message
-                    onError?(message)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.isStreaming = false
+                    self.error = message
+                    self.onError?(message)
                 }
             }
 

@@ -185,7 +185,6 @@ struct DecayEngine {
         for memory in memories {
             guard !memory.isUserExplicit else { continue }
             memory.decayWeight = effectiveWeight(memory)
-            memory.lastAccessedAt = Date()
             // 检查 validUntil
             if let until = memory.validUntil, Date() > until {
                 memory.decayWeight = min(memory.decayWeight, 0.05)
