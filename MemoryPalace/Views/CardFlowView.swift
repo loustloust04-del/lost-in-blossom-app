@@ -113,6 +113,19 @@ final class ChatScrollHost {
 
     /// [反转列表] 视觉底 = 物理顶 = offset 原点（−顶 inset）。不再和 contentSize 打交道。
     /// 同一位置不重写（避免和手指/惯性打架）；手指按着/拖着时不写，不抢她的手。
+    /// 回底钮：滑回去。很远时先瞬移到离底 1.2 屏，再滑最后这段（Telegram 做法——
+    /// 长距离动画会让 LazyVStack 把中间几百条一路挂一遍，反而卡）
+    func animateToBottom() {
+        guard let sv = scrollView else { return }
+        let target = -sv.adjustedContentInset.top
+        let dist = sv.contentOffset.y - target
+        guard dist > 1 else { return }
+        if dist > sv.bounds.height * 2 {
+            sv.setContentOffset(CGPoint(x: sv.contentOffset.x, y: target + sv.bounds.height * 1.2), animated: false)
+        }
+        sv.setContentOffset(CGPoint(x: sv.contentOffset.x, y: target), animated: true)
+    }
+
     func pinToBottom() {
         guard let sv = scrollView, !sv.isTracking, !sv.isDragging else { return }
         let y = -sv.adjustedContentInset.top
@@ -438,6 +451,15 @@ struct CardFlowView: View {
                                     makeBubbleView(for: node)
                                         .flippedUpsideDown()   // cell 翻回正
                                         .id(node.id)
+                                        // 10-05 往上翻不丝滑：离窗口最老那头还剩 6 条就提前扩一批（预取），
+                                        // 不等滑到底才扩——扩的那一下不再落在手指底下
+                                        .onAppear {
+                                            if viewModel.hasMoreAbove,
+                                               let i = viewModel.visiblePath.firstIndex(where: { $0.id == node.id }), i <= 6 {
+                                                withAnimation(.none) { viewModel.expandRenderWindow() }
+                                                prewarmMarkdown(before: viewModel.renderStart)
+                                            }
+                                        }
                                         // 新消息插在物理顶：从物理顶滑入 = 视觉底滑入
                                         .transition(.opacity.combined(with: .move(edge: .top)))
                                         // 贴纸定位追踪：每条气泡记录 midY。旧版用 .task(id: midY)——
@@ -733,9 +755,15 @@ struct CardFlowView: View {
                             ScrollToBottomButton(
                                 isVisible: true,
                                 action: {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                     // 定位过老消息时窗口没到最新：回底 = 先回到「最新 24 条」窗口
-                                    if viewModel.hasMoreBelow { withAnimation(.none) { viewModel.resetRenderWindow() } }
-                                    scrollToLastMessage(proxy: proxy, force: true)
+                                    if viewModel.hasMoreBelow {
+                                        withAnimation(.none) { viewModel.resetRenderWindow() }
+                                        scrollToLastMessage(proxy: proxy, force: true)
+                                    } else {
+                                        // 10-05 回底钮不丝滑：之前是瞬移；现在滑回去
+                                        scrollHost.animateToBottom()
+                                    }
                                 }
                             )
                             .padding(.trailing, 16)
@@ -1871,11 +1899,11 @@ private struct InputFieldContainer: View {
         }
         // 切对话：换成新对话的草稿（旧对话的已实时落盘，无需 flush）
         .onChange(of: draftConversationId) { _, _ in
-            text = initialDraft
+            text = Self.isJustSent(initialDraft) ? "" : initialDraft
         }
-        // 冷启动 / view 重建：恢复当前对话的草稿
+        // 冷启动 / view 重建：恢复当前对话的草稿（刚发出去的那句不算草稿）
         .onAppear {
-            if text.isEmpty, !initialDraft.isEmpty { text = initialDraft }
+            if text.isEmpty, !initialDraft.isEmpty, !Self.isJustSent(initialDraft) { text = initialDraft }
         }
     }
 
@@ -1885,10 +1913,31 @@ private struct InputFieldContainer: View {
         isFocused = true
     }
 
+    /// 刚发出去的那句（静态：输入条视图在发送那一刻可能被重建，@State 会丢）
+    static var lastSent: (text: String, at: Date)? = nil
+    private static func isJustSent(_ s: String) -> Bool {
+        guard let l = lastSent, !s.isEmpty else { return false }
+        return Date().timeIntervalSince(l.at) < 3 && (s == l.text || l.text.hasPrefix(s) || s.hasPrefix(l.text))
+    }
+
     private func triggerSend() {
         if isStreaming { onCancelStream(); return }
         HapticService.shared.sendMessage()
-        if onSend(text) { text = "" }
+        let sent = text
+        if onSend(sent) {
+            // 10-05 兔兔「消息发出去了，字还留在输入框里」三个来源一起堵：
+            // ① 草稿每键落盘，发送后输入条被重建 → onAppear 拿旧草稿又填回来 → 发送时立刻把草稿也清掉
+            // ② 中文输入法组字中点发送，清空后输入法把没上屏的那截再提交一次 → 稍后再看一眼，是那句就再清
+            // ③ 发第一句时新建了对话，draftConversationId 一变就把（旧的）初始草稿塞回来 → 认出是刚发的就不塞
+            Self.lastSent = (sent, Date())
+            text = ""
+            onDraftChange?("")
+            for d in [0.05, 0.2, 0.6] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + d) {
+                    if Self.isJustSent(text) { text = ""; onDraftChange?("") }
+                }
+            }
+        }
     }
 }
 
