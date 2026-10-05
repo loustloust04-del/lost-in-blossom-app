@@ -376,6 +376,61 @@ struct CardFlowView: View {
         }
     }
 
+    /// 列表里的一行（10-05 从 body 里拆出来：body 太大，编��器类型检查超时）
+    @ViewBuilder private func messageRow(_ node: MessageNode) -> some View {
+                    makeBubbleView(for: node)
+                        .flippedUpsideDown()   // cell 翻回正
+                        .id(node.id)
+                        // 10-05 往上翻不丝滑：离窗口最老那头还剩 6 条就提前扩一批（预取），
+                        // 不等滑到底才扩——扩的那一下不再落在手指底下
+                        .onAppear { prefetchOlderIfNeeded(node) }
+                        // 新消息插在物理顶：从物理顶滑入 = 视觉底滑入
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        // 贴纸定位追踪：每条气泡记录 midY。旧版用 .task(id: midY)——
+                        // 滚动时每帧每条可见气泡 cancel+新建一个 async Task，是滚动卡顿
+                        // 大户。改 iOS 18 原生 onGeometryChange：同步闭包、值变才回调、
+                        // 零 Task 分配。bubblePositions 是 @ObservationIgnored，写它不触发重绘。
+                        .background(
+                            Color.clear.onGeometryChange(for: CGFloat.self) { proxy in
+                                proxy.frame(in: .named("scrollContent")).midY
+                            } action: { midY in
+                                stickerVM.bubblePositions[node.id] = midY
+                            }
+                        )
+    }
+
+    /// 往上翻预取：离窗口最老那头还剩 6 条就提前扩一批
+    private func prefetchOlderIfNeeded(_ node: MessageNode) {
+        guard viewModel.hasMoreAbove,
+              let i = viewModel.visiblePath.firstIndex(where: { $0.id == node.id }), i <= 6 else { return }
+        withAnimation(.none) { viewModel.expandRenderWindow() }
+        prewarmMarkdown(before: viewModel.renderStart)
+    }
+
+    /// 回底钮
+    private func scrollToBottomTapped(proxy: ScrollViewProxy) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        if viewModel.hasMoreBelow {
+            withAnimation(.none) { viewModel.resetRenderWindow() }
+            scrollToLastMessage(proxy: proxy, force: true)
+        } else {
+            scrollHost.animateToBottom()
+        }
+    }
+
+    /// 顶栏下：置顶条 + 正在放歌胶囊
+    private var topFloatingStack: some View {
+        VStack(spacing: 6) {
+            PinnedBar(pinned: viewModel.currentPath.filter { $0.isPinned && !$0.isTrashed },
+                      assistantName: profileManager?.currentProfile.assistantName ?? "Caelum") { n in
+                viewModel.scrollToNodeId = n.id
+            }
+            NowPlayingCapsule()
+        }
+        .padding(.top, (UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.safeAreaInsets.top ?? 59) + 62)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: MusicPlayer.shared.currentSong?.remoteId)
+    }
+
     var body: some View {
         if viewModel.isCurrentConvLoading {
             VStack {
@@ -448,31 +503,7 @@ struct CardFlowView: View {
                                     .flippedUpsideDown()
                                 }
                                 ForEach(viewModel.visiblePath.reversed(), id: \.id) { node in
-                                    makeBubbleView(for: node)
-                                        .flippedUpsideDown()   // cell 翻回正
-                                        .id(node.id)
-                                        // 10-05 往上翻不丝滑：离窗口最老那头还剩 6 条就提前扩一批（预取），
-                                        // 不等滑到底才扩——扩的那一下不再落在手指底下
-                                        .onAppear {
-                                            if viewModel.hasMoreAbove,
-                                               let i = viewModel.visiblePath.firstIndex(where: { $0.id == node.id }), i <= 6 {
-                                                withAnimation(.none) { viewModel.expandRenderWindow() }
-                                                prewarmMarkdown(before: viewModel.renderStart)
-                                            }
-                                        }
-                                        // 新消息插在物理顶：从物理顶滑入 = 视觉底滑入
-                                        .transition(.opacity.combined(with: .move(edge: .top)))
-                                        // 贴纸定位追踪：每条气泡记录 midY。旧版用 .task(id: midY)——
-                                        // 滚动时每帧每条可见气泡 cancel+新建一个 async Task，是滚动卡顿
-                                        // 大户。改 iOS 18 原生 onGeometryChange：同步闭包、值变才回调、
-                                        // 零 Task 分配。bubblePositions 是 @ObservationIgnored，写它不触发重绘。
-                                        .background(
-                                            Color.clear.onGeometryChange(for: CGFloat.self) { proxy in
-                                                proxy.frame(in: .named("scrollContent")).midY
-                                            } action: { midY in
-                                                stickerVM.bubblePositions[node.id] = midY
-                                            }
-                                        )
+                                    messageRow(node)
                                 }
                                 // 只渲染尾部窗口，滑到（视觉）顶自动往前扩一段——物理末尾 = 视觉顶
                                 if viewModel.hasMoreAbove {
@@ -737,34 +768,13 @@ struct CardFlowView: View {
                     .ignoresSafeArea(.container, edges: .top)
                     .padding(.bottom, -barOverlap)
                     // 正在放歌：顶栏下面一颗小胶囊（10-05 音乐卡配套，切对话也在）
-                    .overlay(alignment: .top) {
-                        // 顶栏下面：置顶消息条（10-05 Telegram 式）+ 正在放歌的小胶囊
-                        VStack(spacing: 6) {
-                            PinnedBar(pinned: viewModel.currentPath.filter { $0.isPinned && !$0.isTrashed },
-                                      assistantName: profileManager?.currentProfile.assistantName ?? "Caelum") { n in
-                                viewModel.scrollToNodeId = n.id
-                            }
-                            NowPlayingCapsule()
-                        }
-                        .padding(.top, (UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.safeAreaInsets.top ?? 59) + 62)
-                        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: MusicPlayer.shared.currentSong?.remoteId)
-                    }
+                    .overlay(alignment: .top) { topFloatingStack }   // 置顶条 + 正在放歌胶囊（10-05）
                     .overlay(alignment: .bottomTrailing) {
                         // 回底按钮浮在列表上，不占 safe area（见上）
                         if !isAtBottom && !viewModel.currentPath.isEmpty {
                             ScrollToBottomButton(
                                 isVisible: true,
-                                action: {
-                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                    // 定位过老消息时窗口没到最新：回底 = 先回到「最新 24 条」窗口
-                                    if viewModel.hasMoreBelow {
-                                        withAnimation(.none) { viewModel.resetRenderWindow() }
-                                        scrollToLastMessage(proxy: proxy, force: true)
-                                    } else {
-                                        // 10-05 回底钮不丝滑：之前是瞬移；现在滑回去
-                                        scrollHost.animateToBottom()
-                                    }
-                                }
+                                action: { scrollToBottomTapped(proxy: proxy) }
                             )
                             .padding(.trailing, 16)
                             .padding(.bottom, 8)
