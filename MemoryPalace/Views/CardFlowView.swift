@@ -1087,61 +1087,155 @@ struct InConversationSearchBar: View {
     var focused: FocusState<Bool>.Binding
     var onDismiss: () -> Void
     @State private var keyword: String = ""
+    @State private var debounce: DispatchWorkItem? = nil
+    @State private var showList = false
+    @State private var showCalendar = false
+    @State private var day = Date()
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 12))
+                .font(.system(size: 13))
                 .foregroundColor(Theme.textMuted)
 
-            TextField("搜索当前对话...", text: $keyword)
+            TextField("在这段对话里找…（空格分开多个词）", text: $keyword)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13))
+                .font(.system(size: 14))
                 .focused(focused)
-                .onSubmit {
-                    viewModel.searchInConversation(keyword: keyword)
-                }
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .onSubmit { viewModel.searchInConversation(keyword: keyword); focused.wrappedValue = false }
                 .onChange(of: keyword) { _, newValue in
-                    if newValue.isEmpty {
-                        viewModel.clearInConvSearch()
-                    }
+                    // 打字即搜：停 0.25 秒再搜（拼音组字中不会每个字母都搜一遍）
+                    debounce?.cancel()
+                    if newValue.isEmpty { viewModel.clearInConvSearch(); return }
+                    let w = DispatchWorkItem { viewModel.searchInConversation(keyword: newValue) }
+                    debounce = w
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: w)
                 }
 
             if !viewModel.inConvMatches.isEmpty {
                 Text("\(viewModel.inConvMatchIndex + 1)/\(viewModel.inConvMatches.count)")
-                    .font(.caption2)
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(Theme.textMuted)
                     .monospacedDigit()
-
-                Button(action: { viewModel.navigateInConvMatch(direction: -1) }) {
-                    Image(systemName: "chevron.up")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Theme.branchIndicator)
+                // ↑ 更早 / ↓ 更新，合成一个竖胶囊（粟粟同款），按钮 36pt 好点
+                HStack(spacing: 0) {
+                    Button { viewModel.navigateInConvMatch(direction: 1) } label: {
+                        Image(systemName: "chevron.up").font(.system(size: 13, weight: .semibold)).frame(width: 34, height: 30)
+                    }
+                    Button { viewModel.navigateInConvMatch(direction: -1) } label: {
+                        Image(systemName: "chevron.down").font(.system(size: 13, weight: .semibold)).frame(width: 34, height: 30)
+                    }
                 }
                 .buttonStyle(.plain)
-
-                Button(action: { viewModel.navigateInConvMatch(direction: 1) }) {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Theme.branchIndicator)
+                .foregroundColor(Theme.branchIndicator)
+                .background(Capsule().fill(Theme.branchIndicator.opacity(0.1)))
+                Button { showList = true } label: {
+                    Image(systemName: "list.bullet").font(.system(size: 13, weight: .medium)).frame(width: 30, height: 30)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.plain).foregroundColor(Theme.textMuted)
             } else if !keyword.isEmpty && viewModel.inConvMatchIndex == -1 {
-                Text("无结果")
-                    .font(.caption2)
-                    .foregroundColor(Theme.textMuted)
+                Text("没找到").font(.system(size: 12)).foregroundColor(Theme.textMuted)
             }
+
+            Button { showCalendar = true } label: {
+                Image(systemName: "calendar").font(.system(size: 13, weight: .medium)).frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain).foregroundColor(Theme.textMuted)
 
             Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(Theme.textMuted)
+                Image(systemName: "xmark").font(.system(size: 12, weight: .medium)).frame(width: 28, height: 30)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plain).foregroundColor(Theme.textMuted)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
         .background(Theme.sidebarBg)
+        .sheet(isPresented: $showList) {
+            InConvMatchList(viewModel: viewModel, keyword: viewModel.inConvSearchKeyword) { id in
+                showList = false
+                viewModel.jumpToMatch(id)
+            }
+            .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $showCalendar) {
+            NavigationStack {
+                DatePicker("跳到哪天", selection: $day,
+                           in: (viewModel.currentPath.first?.createTime ?? .distantPast)...Date(),
+                           displayedComponents: .date)
+                    .datePickerStyle(.graphical)
+                    .padding()
+                    .navigationTitle("跳到某天")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("跳过去") { showCalendar = false; viewModel.jumpToDay(day) }
+                        }
+                        ToolbarItem(placement: .cancellationAction) { Button("取消") { showCalendar = false } }
+                    }
+            }
+            .presentationDetents([.medium, .large])
+        }
+    }
+}
+
+/// 列表模式：所有命中排成一列，片段里关键词高亮，点哪条跳哪条
+struct InConvMatchList: View {
+    var viewModel: ConversationViewModel
+    let keyword: String
+    let onPick: (String) -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(viewModel.inConvMatches, id: \.self) { id in
+                    if let n = viewModel.currentPath.first(where: { $0.id == id }) {
+                        Button { onPick(id) } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(n.role == "assistant" ? (n.senderName ?? "他") : "我")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundColor(n.role == "assistant" ? Theme.branchIndicator : Theme.textMuted)
+                                    Spacer()
+                                    Text((n.createTime ?? Date()).formatted(.dateTime.month().day().hour().minute()))
+                                        .font(.system(size: 11)).foregroundColor(Theme.textMuted)
+                                }
+                                Text(snippet(n)).font(.system(size: 14)).lineLimit(3)
+                            }
+                            .padding(.vertical, 2)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .navigationTitle("\(viewModel.inConvMatches.count) 处")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    /// 关键词前后各留一截，命中的词加底色
+    private func snippet(_ n: MessageNode) -> AttributedString {
+        let text = ContentCleaner.visibleText(n.content, isUser: n.role == "user", cacheKey: n.id)
+            .replacingOccurrences(of: "\n", with: " ")
+        let words = keyword.split(separator: " ").map(String.init).filter { !$0.isEmpty }
+        var start = text.startIndex
+        if let w = words.first, let r = text.range(of: w, options: [.caseInsensitive, .diacriticInsensitive]) {
+            start = text.index(r.lowerBound, offsetBy: -min(24, text.distance(from: text.startIndex, to: r.lowerBound)))
+        }
+        let piece = (start > text.startIndex ? "…" : "") + String(text[start...].prefix(140))
+        var a = AttributedString(piece)
+        a.foregroundColor = Theme.textPrimary
+        for w in words {
+            var searchFrom = a.startIndex
+            while let r = a[searchFrom...].range(of: w, options: [.caseInsensitive, .diacriticInsensitive]) {
+                a[r].backgroundColor = Theme.branchIndicator.opacity(0.25)
+                a[r].font = .system(size: 14, weight: .semibold)
+                searchFrom = r.upperBound
+            }
+        }
+        return a
     }
 }
 
