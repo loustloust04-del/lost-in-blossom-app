@@ -187,3 +187,47 @@ struct MusicCardView: View {
         }
     }
 }
+
+/// 正在放歌时，聊天页顶栏下面一颗小玻璃胶囊（粟粟 09-27 同款）：转着的小黑胶 + 歌名 + 暂停/继续。
+/// 切到别的对话也在，歌不停。
+struct NowPlayingCapsule: View {
+    private var player: MusicPlayer { MusicPlayer.shared }
+    @State private var spin: Double = 0
+
+    var body: some View {
+        if let song = player.currentSong {
+            HStack(spacing: 8) {
+                ZStack {
+                    Circle().fill(Color(red: 0.08, green: 0.08, blue: 0.09))
+                    Circle().fill(Color(red: 0.55, green: 0.74, blue: 0.62)).frame(width: 9, height: 9)
+                }
+                .frame(width: 22, height: 22)
+                .rotationEffect(.degrees(spin))
+                Text(song.artist.isEmpty ? song.title : "\(song.title) · \(song.artist)")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(Theme.textPrimary)
+                    .lineLimit(1)
+                    .frame(maxWidth: 170, alignment: .leading)
+                Button { player.toggle() } label: {
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(Theme.textPrimary)
+                        .frame(width: 24, height: 24)
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.leading, 6).padding(.trailing, 8).padding(.vertical, 5)
+            .background(Capsule().fill(.ultraThinMaterial))
+            .overlay(Capsule().stroke(Theme.textMuted.opacity(0.15), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
+            .onAppear { if player.isPlaying { startSpin() } }
+            .onChange(of: player.isPlaying) { _, p in if p { startSpin() } else { spin = spin.truncatingRemainder(dividingBy: 360) } }
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    private func startSpin() {
+        withAnimation(.linear(duration: 6).repeatForever(autoreverses: false)) { spin += 360 }
+    }
+}

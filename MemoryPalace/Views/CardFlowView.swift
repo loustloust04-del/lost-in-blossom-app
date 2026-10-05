@@ -714,6 +714,12 @@ struct CardFlowView: View {
                     // barOverlap 那么多，内容滚过输入条的毛玻璃；最新一条靠 contentMargins 停在输入条上方。
                     .ignoresSafeArea(.container, edges: .top)
                     .padding(.bottom, -barOverlap)
+                    // 正在放歌：顶栏下面一颗小胶囊（10-05 音乐卡配套，切对话也在）
+                    .overlay(alignment: .top) {
+                        NowPlayingCapsule()
+                            .padding(.top, (UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.safeAreaInsets.top ?? 59) + 62)
+                            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: MusicPlayer.shared.currentSong?.remoteId)
+                    }
                     .overlay(alignment: .bottomTrailing) {
                         // 回底按钮浮在列表上，不占 safe area（见上）
                         if !isAtBottom && !viewModel.currentPath.isEmpty {
