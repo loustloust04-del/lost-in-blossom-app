@@ -11,6 +11,8 @@ final class VoiceRecorder: NSObject, ObservableObject {
     @Published private(set) var isRecording = false
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var level: Float = 0        // 0…1，给波形/呼吸圈用
+    /// 最近一段的电平（10-05 声浪：录音条里一排柱子跟着声音跳）
+    @Published private(set) var levels: [Float] = []
     @Published var lastError: String? = nil
 
     private var recorder: AVAudioRecorder?
@@ -31,6 +33,7 @@ final class VoiceRecorder: NSObject, ObservableObject {
     }
 
     func start() async -> Bool {
+        levels = []
         guard !isRecording else { return true }
         guard await requestPermission() else { lastError = "没有麦克风权限"; return false }
         let session = AVAudioSession.sharedInstance()
@@ -71,6 +74,8 @@ final class VoiceRecorder: NSObject, ObservableObject {
         r.updateMeters()
         let db = r.averagePower(forChannel: 0)          // -160…0
         level = max(0, min(1, (db + 50) / 50))          // -50dB 以下当静音
+        levels.append(level)
+        if levels.count > 40 { levels.removeFirst(levels.count - 40) }
         elapsed = Date().timeIntervalSince(s)
         if elapsed >= Self.maxSeconds { _ = stop() }
     }

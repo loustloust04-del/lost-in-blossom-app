@@ -1510,6 +1510,9 @@ private struct InputFieldContainer: View {
     @State private var quoteDraft = QuoteDraft.shared
     @State private var voiceStarting = false
     @State private var voiceCancelArmed = false
+    /// 上滑锁定（10-05 Telegram / 粟粟式）：锁住后可以松手继续说，点「发送」才发
+    @State private var voiceLocked = false
+    @State private var voiceShake: CGFloat = 0
     let onCancelStream: () -> Void
     let onStickerTap: (() -> Void)?
     let onModelTap: () -> Void
@@ -1628,19 +1631,15 @@ private struct InputFieldContainer: View {
                 .transition(.opacity)
             }
             if recorder.isRecording {
-                HStack(spacing: 8) {
-                    Circle().fill(Theme.danger).frame(width: 8, height: 8)
-                        .opacity(0.4 + Double(recorder.level) * 0.6)
-                    Text(String(format: "%d:%02d", Int(recorder.elapsed) / 60, Int(recorder.elapsed) % 60))
-                        .font(.system(size: 13, weight: .medium).monospacedDigit())
-                        .foregroundColor(Theme.textPrimary)
-                    Text(voiceCancelArmed ? "松手取消" : "松手发送 · 上滑取消")
-                        .font(.system(size: 12))
-                        .foregroundColor(voiceCancelArmed ? Theme.danger : Theme.textMuted)
-                    Spacer()
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+                VoiceRecordingRow(
+                    levels: recorder.levels,
+                    elapsed: recorder.elapsed,
+                    cancelArmed: voiceCancelArmed,
+                    locked: voiceLocked,
+                    onCancel: { recorder.cancel(); voiceLocked = false; HapticService.shared.longPress() },
+                    onSend: { finishVoice() }
+                )
+                .modifier(ShakeEffect(animatableData: voiceShake))
                 .transition(.opacity)
             }
             // ── 多附件条（09-12）：缩略图 / 文件块横排，各自可删 ──────────────
@@ -1884,16 +1883,20 @@ private struct InputFieldContainer: View {
                                     else if let e = recorder.lastError { ToastCenter.shared.show(e) }
                                 }
                             }
-                            voiceCancelArmed = g.translation.height < -60   // 上滑超过 60pt = 松手取消
+                            guard !voiceLocked else { return }
+                            // 10-05：左滑 80pt = 松手取消；上滑 70pt = 锁定（可以松手继续说）
+                            voiceCancelArmed = g.translation.width < -80
+                            if g.translation.height < -70 && !voiceCancelArmed && recorder.isRecording {
+                                voiceLocked = true
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            }
                         }
                         .onEnded { _ in
                             guard recorder.isRecording || voiceStarting else { return }
                             defer { voiceCancelArmed = false }
+                            if voiceLocked { return }                 // 锁着：松手不发，继续录
                             if voiceCancelArmed { recorder.cancel(); return }
-                            if let r = recorder.stop() {
-                                onSendVoice?(r.url, r.duration)
-                                HapticService.shared.sendMessage()
-                            }
+                            finishVoice()
                         }
                 )
                 // 44×44 是 iOS 标准最小点击区，也是整行高度的下限——
@@ -2008,6 +2011,20 @@ private struct InputFieldContainer: View {
         // 冷启动 / view 重建：恢复当前对话的草稿（刚发出去的那句不算草稿）
         .onAppear {
             if text.isEmpty, !initialDraft.isEmpty, !Self.isJustSent(initialDraft) { text = initialDraft }
+        }
+    }
+
+    /// 停止并发送；太短（<0.6s）抖一下提醒
+    private func finishVoice() {
+        let wasLocked = voiceLocked
+        voiceLocked = false
+        if let r = recorder.stop() {
+            onSendVoice?(r.url, r.duration)
+            HapticService.shared.sendMessage()
+        } else if !wasLocked || recorder.elapsed < 1 {
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            withAnimation(.linear(duration: 0.35)) { voiceShake += 1 }
+            ToastCenter.shared.show("太短啦，按住多说一会儿")
         }
     }
 
@@ -3638,3 +3655,62 @@ private struct TransientNoticeCapsule: View {
 }
 
 // BubbleAttachmentItem 已随粟粟原文搬运挪到 Views/BubbleAttachmentStrip.swift（2026-08-30）
+
+
+/// 录音条（10-05）：红点 + 时长 + 一排跟着声音跳的柱子 + 提示；锁定后出「取消 / 发送」
+struct VoiceRecordingRow: View {
+    let levels: [Float]
+    let elapsed: TimeInterval
+    let cancelArmed: Bool
+    let locked: Bool
+    let onCancel: () -> Void
+    let onSend: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle().fill(Theme.danger).frame(width: 8, height: 8)
+            Text(String(format: "%d:%02d", Int(elapsed) / 60, Int(elapsed) % 60))
+                .font(.system(size: 13, weight: .medium).monospacedDigit())
+                .foregroundColor(Theme.textPrimary)
+            // 声浪：最近 40 格电平，右边最新
+            HStack(alignment: .center, spacing: 2) {
+                ForEach(0..<40, id: \.self) { i in
+                    let k = i - (40 - levels.count)
+                    let v = k >= 0 ? CGFloat(levels[k]) : 0
+                    Capsule()
+                        .fill(cancelArmed ? Theme.danger.opacity(0.6) : Theme.branchIndicator.opacity(0.35 + Double(v) * 0.65))
+                        .frame(width: 2.5, height: 3 + v * 20)
+                }
+            }
+            .frame(height: 24)
+            .animation(.easeOut(duration: 0.08), value: levels.count)
+            Spacer(minLength: 4)
+            if locked {
+                Button("取消", action: onCancel)
+                    .font(.system(size: 13)).foregroundColor(Theme.textMuted)
+                Button(action: onSend) {
+                    Text("发送").font(.system(size: 13, weight: .semibold)).foregroundColor(.white)
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .background(Capsule().fill(Theme.branchIndicator))
+                }
+                .buttonStyle(.plain)
+            } else {
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(cancelArmed ? "松手取消" : "← 左滑取消")
+                        .font(.system(size: 11)).foregroundColor(cancelArmed ? Theme.danger : Theme.textMuted)
+                    Text("↑ 上滑锁定").font(.system(size: 11)).foregroundColor(Theme.textMuted)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+    }
+}
+
+/// 左右抖一下
+struct ShakeEffect: GeometryEffect {
+    var animatableData: CGFloat
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        ProjectionTransform(CGAffineTransform(translationX: 8 * sin(animatableData * .pi * 4), y: 0))
+    }
+}
