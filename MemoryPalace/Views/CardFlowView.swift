@@ -716,9 +716,16 @@ struct CardFlowView: View {
                     .padding(.bottom, -barOverlap)
                     // 正在放歌：顶栏下面一颗小胶囊（10-05 音乐卡配套，切对话也在）
                     .overlay(alignment: .top) {
-                        NowPlayingCapsule()
-                            .padding(.top, (UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.safeAreaInsets.top ?? 59) + 62)
-                            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: MusicPlayer.shared.currentSong?.remoteId)
+                        // 顶栏下面：置顶消息条（10-05 Telegram 式）+ 正在放歌的小胶囊
+                        VStack(spacing: 6) {
+                            PinnedBar(pinned: viewModel.currentPath.filter { $0.isPinned && !$0.isTrashed },
+                                      assistantName: profileManager?.currentProfile.assistantName ?? "Caelum") { n in
+                                viewModel.scrollToNodeId = n.id
+                            }
+                            NowPlayingCapsule()
+                        }
+                        .padding(.top, (UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.safeAreaInsets.top ?? 59) + 62)
+                        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: MusicPlayer.shared.currentSong?.remoteId)
                     }
                     .overlay(alignment: .bottomTrailing) {
                         // 回底按钮浮在列表上，不占 safe area（见上）

@@ -38,8 +38,9 @@ enum ChatCard {
     case ask(AskCard)
     case dice(DiceCard)
     case music(MusicCard)
+    case todo(TodoCard)
 
-    static let shorthandKinds: Set<String> = ["ask", "dice", "music"]
+    static let shorthandKinds: Set<String> = ["ask", "dice", "music", "todo"]
 
     static func parse(kind: String, json: String) -> ChatCard? {
         guard let data = json.data(using: .utf8),
@@ -48,6 +49,7 @@ enum ChatCard {
         case "ask": return AskCard(obj).map { .ask($0) }
         case "dice": return DiceCard(obj).map { .dice($0) }
         case "music": return MusicCard(obj).map { .music($0) }
+        case "todo": return TodoCard(obj).map { .todo($0) }
         default: return nil
         }
     }
@@ -313,8 +315,75 @@ struct ChatCardSegmentsView<TextBody: View>: View {
                 case .card(.ask(let c)): AskCardView(card: c, answerKey: "\(nodeId)#\(i)")
                 case .card(.dice(let c)): DiceCardView(card: c, answerKey: "\(nodeId)#\(i)")
                 case .card(.music(let c)): MusicCardView(card: c)
+                case .card(.todo(let c)): TodoCardView(card: c, answerKey: "\(nodeId)#\(i)")
                 }
             }
         }
+    }
+}
+
+// MARK: - 待办卡（10-05）：他列的几件事，一点「加入」就进她的待办
+
+struct TodoCard {
+    let title: String?
+    let items: [String]
+    init?(_ o: [String: Any]) {
+        title = o["title"] as? String
+        let arr = (o["items"] as? [Any])?.compactMap { "\($0)" } ?? ((o["item"] as? String).map { [$0] } ?? [])
+        guard !arr.isEmpty else { return nil }
+        items = Array(arr.prefix(12))
+    }
+}
+
+struct TodoCardView: View {
+    let card: TodoCard
+    let answerKey: String
+    @State private var added: Set<String> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "checklist").font(.system(size: 13)).foregroundColor(Theme.branchIndicator)
+                Text(card.title ?? "待办").font(.system(size: 14, weight: .semibold)).foregroundColor(Theme.textPrimary)
+                Spacer()
+                if added.count < card.items.count {
+                    Button("全部加入") { card.items.forEach(add) }
+                        .font(.system(size: 12, weight: .medium)).foregroundColor(Theme.branchIndicator)
+                }
+            }
+            ForEach(card.items, id: \.self) { it in
+                let done = added.contains(it)
+                HStack {
+                    Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                        .foregroundColor(done ? Theme.branchIndicator : Theme.textMuted)
+                    Text(it).font(.system(size: 14)).foregroundColor(done ? Theme.textMuted : Theme.textPrimary)
+                    Spacer()
+                    if !done {
+                        Button { add(it) } label: {
+                            Text("加入").font(.system(size: 12, weight: .medium)).foregroundColor(Theme.branchIndicator)
+                                .padding(.horizontal, 10).padding(.vertical, 4)
+                                .background(Capsule().stroke(Theme.branchIndicator.opacity(0.5), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Text("已加入").font(.system(size: 11)).foregroundColor(Theme.textMuted)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Theme.mainBg.opacity(0.7))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.textMuted.opacity(0.15), lineWidth: 1)))
+        .onAppear {
+            if let s = CardAnswerStore.get(answerKey) { added = Set(s.components(separatedBy: "\u{1F}").filter { !$0.isEmpty }) }
+        }
+    }
+
+    private func add(_ it: String) {
+        guard !added.contains(it) else { return }
+        TodoManager.shared.add(it)
+        added.insert(it)
+        CardAnswerStore.set(answerKey, added.joined(separator: "\u{1F}"))
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 }
