@@ -37,8 +37,9 @@ enum ChatCardParser {
 enum ChatCard {
     case ask(AskCard)
     case dice(DiceCard)
+    case music(MusicCard)
 
-    static let shorthandKinds: Set<String> = ["ask", "dice"]
+    static let shorthandKinds: Set<String> = ["ask", "dice", "music"]
 
     static func parse(kind: String, json: String) -> ChatCard? {
         guard let data = json.data(using: .utf8),
@@ -46,6 +47,7 @@ enum ChatCard {
         switch kind {
         case "ask": return AskCard(obj).map { .ask($0) }
         case "dice": return DiceCard(obj).map { .dice($0) }
+        case "music": return MusicCard(obj).map { .music($0) }
         default: return nil
         }
     }
@@ -310,6 +312,7 @@ struct ChatCardSegmentsView<TextBody: View>: View {
                 case .text(let t): textBody(t)
                 case .card(.ask(let c)): AskCardView(card: c, answerKey: "\(nodeId)#\(i)")
                 case .card(.dice(let c)): DiceCardView(card: c, answerKey: "\(nodeId)#\(i)")
+                case .card(.music(let c)): MusicCardView(card: c)
                 }
             }
         }
