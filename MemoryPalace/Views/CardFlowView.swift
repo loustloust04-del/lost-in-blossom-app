@@ -406,6 +406,19 @@ struct CardFlowView: View {
                             // 视觉顶的 nav 留白已经算进列表高（见下方 padding(.bottom)），这里只扣输入条那截
                             Color.clear.frame(height: shortConvPad)
                             LazyVStack(spacing: bubbleSpacing) {
+                                // 定位到老消息时窗口没到最新：视觉底出一条「看更新的」，滑到即往下扩
+                                if viewModel.hasMoreBelow {
+                                    Button { withAnimation(.none) { viewModel.expandRenderWindowDown() } } label: {
+                                        Text("看更新的消息")
+                                            .font(.system(size: Theme.F.caption))
+                                            .foregroundColor(Theme.textMuted)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 10)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .flippedUpsideDown()
+                                    .onAppear { viewModel.expandRenderWindowDown() }
+                                }
                                 // [反转列表] 物理顺序 = 视觉倒序：这里第一项是视觉底。
                                 // 哨兵留在物理顶，proxy 回落路径用 scrollTo(anchor: .top)
                                 Color.clear
@@ -657,13 +670,20 @@ struct CardFlowView: View {
                                 scrollHost.holdReading()
                                 return
                             }
-                            // 先无动画跳（让 LazyVStack 加载目标），再动画微调
-                            proxy.scrollTo(nodeId, anchor: .center)
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    proxy.scrollTo(nodeId, anchor: .center)
+                            // 10-03：目标不在渲染窗口里（窗口只画最新 24 条）→ 先把窗口挪到它附近，
+                            // 下一圈 runloop 它画出来了再跳。之前直接 scrollTo 一个还没画的气泡 = 什么都不发生，
+                            // 只能手动往上翻、24 条 24 条地挂——兔兔说的「定位很慢」
+                            let moved = withAnimation(.none) { viewModel.focusRenderWindow(on: nodeId) }
+                            let t = CFAbsoluteTimeGetCurrent()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + (moved ? 0.12 : 0)) {
+                                proxy.scrollTo(nodeId, anchor: .center)
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        proxy.scrollTo(nodeId, anchor: .center)
+                                    }
+                                    viewModel.scrollToNodeId = nil
+                                    BreadcrumbLog.shared.add("📍", "定位\(moved ? "（挪窗口）" : "") \(Int((CFAbsoluteTimeGetCurrent() - t) * 1000))ms")
                                 }
-                                viewModel.scrollToNodeId = nil
                             }
                         }
                     }
@@ -699,7 +719,11 @@ struct CardFlowView: View {
                         if !isAtBottom && !viewModel.currentPath.isEmpty {
                             ScrollToBottomButton(
                                 isVisible: true,
-                                action: { scrollToLastMessage(proxy: proxy, force: true) }
+                                action: {
+                                    // 定位过老消息时窗口没到最新：回底 = 先回到「最新 24 条」窗口
+                                    if viewModel.hasMoreBelow { withAnimation(.none) { viewModel.resetRenderWindow() } }
+                                    scrollToLastMessage(proxy: proxy, force: true)
+                                }
                             )
                             .padding(.trailing, 16)
                             .padding(.bottom, 8)
@@ -1338,6 +1362,7 @@ private struct InputFieldContainer: View {
     let onSend: (String) -> Bool
     var onSendVoice: ((URL, Double) -> Void)? = nil
     @ObservedObject private var recorder = VoiceRecorder.shared
+    @State private var quoteDraft = QuoteDraft.shared
     @State private var voiceStarting = false
     @State private var voiceCancelArmed = false
     let onCancelStream: () -> Void
@@ -1432,6 +1457,31 @@ private struct InputFieldContainer: View {
         #endif
         return AnyView(VStack(spacing: 0) {
             // ── 录音中（09-25）：计时 + 提示，压在输入框上方 ──────────────
+            Color.clear.frame(width: 0, height: 0)
+                .onReceive(NotificationCenter.default.publisher(for: .composerInsert)) { n in
+                    if let t = n.userInfo?["text"] as? String { insertFromCanvas(t) }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .composerSendNow)) { n in
+                    // 卡片作答：当作她的一条消息直接发（不动她输入框里正在打的字）
+                    if let t = n.userInfo?["text"] as? String { _ = onSend(t) }
+                }
+            if let q = quoteDraft.pending {
+                HStack(spacing: 8) {
+                    RoundedRectangle(cornerRadius: 1.5).fill(Theme.branchIndicator).frame(width: 3, height: 28)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("回复 \(q.who)").font(.system(size: 11, weight: .medium)).foregroundColor(Theme.branchIndicator)
+                        Text(q.text).font(.system(size: 12)).foregroundColor(Theme.textMuted).lineLimit(1)
+                    }
+                    Spacer()
+                    Button { quoteDraft.pending = nil } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 16)).foregroundColor(Theme.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .transition(.opacity)
+            }
             if recorder.isRecording {
                 HStack(spacing: 8) {
                     Circle().fill(Theme.danger).frame(width: 8, height: 8)
@@ -1814,6 +1864,12 @@ private struct InputFieldContainer: View {
         .onAppear {
             if text.isEmpty, !initialDraft.isEmpty { text = initialDraft }
         }
+    }
+
+    /// mp.ask 塞进来的话：接在她已经打的字后面（10-03 网页卡的手）
+    func insertFromCanvas(_ t: String) {
+        text = text.isEmpty ? t : text + (text.hasSuffix(" ") ? "" : " ") + t
+        isFocused = true
     }
 
     private func triggerSend() {
@@ -2451,6 +2507,10 @@ struct BubbleView: View {
             HapticService.shared.longPress()
             onNotice?(willPin ? "已钉住" : "已取消钉住")
         })
+        specs.append(MenuActionSpec(title: "引用", systemImage: "arrowshape.turn.up.left") {
+            QuoteDraft.shared.set(from: node, assistantName: UserDefaults.standard.string(forKey: "assistantName") ?? "Caelum")
+            HapticService.shared.longPress()
+        })
         specs.append(MenuActionSpec(title: "复制文本", systemImage: "doc.on.doc") {
             UIPasteboard.general.string = ContentCleaner.clean(node.content, cacheKey: node.id)
             HapticService.shared.copyText()
@@ -2569,6 +2629,50 @@ struct BubbleView: View {
         return specs
     }
 
+    /// 正文 Markdown（缓存解析 + 主题），对话卡片的文字段也用它
+    private func markdownBody(_ text: String, key: String) -> some View {
+        Markdown(MarkdownParseCache.content(nodeId: key, text: text))
+            .markdownTheme(
+                .memoryPalace(
+                    fontName: selectedFont,
+                    scale: CGFloat(fontScale > 0 ? fontScale : 1.0),
+                    lineSpacingScale: CGFloat(lineSpacingScale),
+                    paragraphSpacingScale: CGFloat(paragraphSpacingScale)
+                )
+            )
+            .textSelection(.enabled)
+    }
+
+    @ViewBuilder private var userImagesOutsideBlock: some View {
+        if isUser, node.contentType == "multimodal_text" {
+            let mm = MultimodalUserBubble.parse(node.content)
+            if !mm.images.isEmpty {
+                let items: [BubbleAttachmentItem] = mm.images.enumerated().map { .image(name: "photo\($0.offset + 1).jpg", data: $0.element) }
+                BubbleAttachmentStrip(items: items, isUser: true)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.bottom, mm.text.isEmpty && mm.fileNames.isEmpty ? 0 : 4)
+            }
+        }
+    }
+
+    /// 一张 = 按比例大图（≤240pt、圆角 14，点开全屏可存相册）；多张 = 可横滑长条
+    @ViewBuilder private var assistantImagesOutsideBlock: some View {
+        if !isUser, !chatBubbleMode, let segs = node.segments {
+            let imgs: [(String, Data)] = segs.compactMap { seg -> (String, Data)? in
+                if case .image(let n, _, let d) = seg { return (n, d) } else { return nil }
+            }
+            if !imgs.isEmpty {
+                OutsideImages(images: imgs)
+                    .padding(.top, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var menuReactionTarget: ChatReactionTarget? { isStreaming ? nil : ChatReactionTarget(node: node) }
+    private var menuSpecsForWrapper: [MenuActionSpec] { useSystemBubbleMenu ? [] : nodeMenuSpecs() }
+    private var wrapperCornerRadius: Double { chatBubbleMode ? bubbleModeCornerRadius : bubbleCornerRadius }
+
     private var articleBody: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 3) {
             // Role label + time（两个都隐藏时整行不 render，避免空 HStack 占位）
@@ -2591,19 +2695,12 @@ struct BubbleView: View {
             }
 
             // 多图消息的图片条画在气泡壳**外面**（粟粟同款：图在上、文字气泡在下；兔兔 09-23 #1）
-            if isUser, node.contentType == "multimodal_text" {
-                let mm = MultimodalUserBubble.parse(node.content)
-                if !mm.images.isEmpty {
-                    let items: [BubbleAttachmentItem] = mm.images.enumerated().map { .image(name: "photo\($0.offset + 1).jpg", data: $0.element) }
-                    BubbleAttachmentStrip(items: items, isUser: true)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        .padding(.bottom, mm.text.isEmpty && mm.fileNames.isEmpty ? 0 : 4)
-                }
-            }
+            userImagesOutsideBlock
 
             // Bubble（[B·砖3] iOS 包 BubbleMenuLiftWrapper：长按走自定义浮层，不用系统 contextMenu——
             // 反转列表下系统 lift 快照会颠倒（七月三雷之二）；浮层零件 592074d4 早已进仓，这里接线）
-            BubbleMenuLiftWrapper(isUser: isUser, cornerRadius: chatBubbleMode ? bubbleModeCornerRadius : bubbleCornerRadius, actions: useSystemBubbleMenu ? [] : nodeMenuSpecs(),
+            BubbleMenuLiftWrapper(isUser: isUser, cornerRadius: wrapperCornerRadius, actions: menuSpecsForWrapper,
+                                  reactionTarget: menuReactionTarget,
                                   // round 11：浮层预览换 UITextView 可选字副本（MarkdownUI 不支持 textSelection）
                                   previewContent: {
                                       let raw = ContentCleaner.clean(node.content, cacheKey: node.id)
@@ -2612,6 +2709,10 @@ struct BubbleView: View {
                                                                            textColor: UIColor(Theme.textPrimary)))
                                   }) {
             VStack(alignment: .leading, spacing: 6) {
+                // 引用回复（10-03）：她这条引用了哪句，顶上画一条
+                if isUser, let q = QuoteDraft.quoteOf(node.content) {
+                    QuoteStrip(text: q)
+                }
                 // 流式优化：streaming 时直接读 streamingContentText（绕过 SwiftData），完成后读 node.content
                 let sourceText = isStreaming && !streamingContentText.isEmpty ? streamingContentText : node.content
                 let rawCleaned = ContentCleaner.clean(sourceText, cacheKey: "\(node.id)_\(sourceText.count)")
@@ -2699,8 +2800,12 @@ struct BubbleView: View {
                         thinkingPreview(staticThinking: thinkingResult?.thinking ?? "")
                     }
                     // Claude v2 导入：按段渲染（每段独立折叠，顺序严格）
+                    // 10-03：他带图的回复，正文段里混着 [thinking]…[/thinking]（老数据），显示时剥掉
                     MessageSegmentsView(
-                        segments: segs,
+                        segments: segs.map { seg in
+                            if case .text(let t) = seg, t.contains("[thinking]") { return .text(ContentCleaner.extractThinking(from: t).content) }
+                            return seg
+                        },
                         selectedFont: selectedFont,
                         fontScale: fontScale,
                         lineSpacingScale: lineSpacingScale,
@@ -2799,17 +2904,15 @@ struct BubbleView: View {
                                     }
                                 }
                             } else {
+                            // 对话卡片（10-04）：他的回复里有 ```card-xxx 就切成「文字 / 卡片」交替画
+                            if !isUser, let segs = ChatCardParser.split(displayText) {
+                                ChatCardSegmentsView(segments: segs, nodeId: node.id) { t in
+                                    markdownBody(BubbleMarkdownSimplifier.simplify(t), key: node.id + "#seg\(t.count)")
+                                }
+                            } else {
                             // round 10：解析走缓存（窗口扩张时后台已预热；未命中就地解析一次）
-                            Markdown(MarkdownParseCache.content(nodeId: node.id, text: isUser ? displayText : BubbleMarkdownSimplifier.simplify(displayText)))
-                                .markdownTheme(
-                                    .memoryPalace(
-                                        fontName: selectedFont,
-                                        scale: CGFloat(fontScale > 0 ? fontScale : 1.0),
-                                        lineSpacingScale: CGFloat(lineSpacingScale),
-                                        paragraphSpacingScale: CGFloat(paragraphSpacingScale)
-                                    )
-                                )
-                                .textSelection(.enabled)
+                            markdownBody(isUser ? displayText : BubbleMarkdownSimplifier.simplify(displayText), key: node.id)
+                            }
                             }
                         }
                     }
@@ -2818,8 +2921,8 @@ struct BubbleView: View {
                 // 主人发来的图/文件（.image / .fileData 段）：文章模式原来只在气泡模式画附件条，
                 // 这里补上——不然他 reply(file_path:) 发的文件只剩一行「📎 名字」（兔兔 09-20）
                 if !chatBubbleMode, let segs = node.segments?.hydratedForDisplay(profileId: node.profileId) {
+                    // 10-03 兔兔：图包在气泡里丑——图挪到气泡外面画（见 outsideImages），这里只留文件卡
                     let items: [BubbleAttachmentItem] = segs.compactMap { seg in
-                        if case .image(let n, _, let d) = seg { return .image(name: n, data: d) }
                         if case .fileData(let n, let m, let d) = seg { return .fileData(name: n, mime: m, data: d) }
                         return nil
                     }
@@ -2854,7 +2957,7 @@ struct BubbleView: View {
                     )
                     ArtifactCardView(artifact: artifact) {
                         // 09-25：不走 fullScreenCover（分页容器里弹出来一片白、没按钮），直接挂 window
-                        ArtifactCanvasPresenter.shared.present(artifact)
+                        ArtifactCanvasPresenter.shared.present(artifact, conversationId: node.conversationId)
                     }
                 }
 
@@ -2939,9 +3042,13 @@ struct BubbleView: View {
                 }
             }
             }   // BubbleMenuLiftWrapper
+            .chatReactionBadge(target: ChatReactionTarget(node: node), isUser: isUser)   // 表情回应角标（10-03）
             .if(isUser) { view in
                 view.frame(maxWidth: 500, alignment: .trailing)
             }
+
+            // 他发来的图：画在气泡**外面**、正文下方（10-03 兔兔「包在气泡里比较丑」）
+            assistantImagesOutsideBlock
             // 长按菜单样式（兔兔 09-13 B 包 #7：「能不能新旧可选」）：浮层 = Telegram 式（默认）；
             // 系统 = 原生 contextMenu，反转列表下自带 preview 画正的（不用系统快照，快照会颠倒）
             .if(useSystemBubbleMenu) { view in

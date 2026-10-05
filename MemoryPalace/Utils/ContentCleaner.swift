@@ -9,10 +9,11 @@ enum ContentCleaner {
     private static let cache = NSCache<NSString, NSString>()
 
     /// Clean all ChatGPT annotation artifacts from text
-    static func clean(_ text: String, cacheKey: String? = nil) -> String {
+    /// - Parameter cached: false = 不读不写缓存（索引回填一次扫几万条，别把缓存冲掉）——粟粟 S5
+    static func clean(_ text: String, cacheKey: String? = nil, cached useCache: Bool = true) -> String {
         // Check cache first
         let key = (cacheKey ?? String(text.hashValue)) as NSString
-        if let cached = cache.object(forKey: key) {
+        if useCache, let cached = cache.object(forKey: key) {
             return cached as String
         }
 
@@ -20,8 +21,10 @@ enum ContentCleaner {
         let hasPUA = text.unicodeScalars.contains(where: { $0.value >= 0xE200 && $0.value <= 0xE206 })
         let hasDagger = text.contains("†")
         let hasTurnRef = text.contains("【turn")
-        if !hasPUA && !hasDagger && !hasTurnRef {
-            cache.setObject(text as NSString, forKey: key)
+        let hasReaction = text.contains("[回应]")
+        let hasQuote = text.hasPrefix("[引用]") || text.contains("[/回应]\n[引用]")
+        if !hasPUA && !hasDagger && !hasTurnRef && !hasReaction && !hasQuote {
+            if useCache { cache.setObject(text as NSString, forKey: key) }
             return text
         }
 
@@ -35,6 +38,16 @@ enum ContentCleaner {
             for scalar in ["\u{E200}", "\u{E201}", "\u{E202}", "\u{E203}", "\u{E204}", "\u{E205}", "\u{E206}"] {
                 result = result.replacingOccurrences(of: scalar, with: "")
             }
+        }
+
+        // 1.5 表情回应捎带段（10-03）：只给模型看，气泡/搜索/复制都不显示
+        if hasReaction {
+            result = result.replacingOccurrences(of: "\\[回应\\][\\s\\S]*?\\[/回应\\]\\n?", with: "", options: .regularExpression)
+        }
+
+        // 1.6 引用前缀（10-03 引用回复）：气泡顶上单独画引用条，正文里不显示
+        if hasQuote {
+            result = result.replacingOccurrences(of: "^\\[引用\\][\\s\\S]*?\\[/引用\\]\\n?", with: "", options: .regularExpression)
         }
 
         // 2. Remove dagger file-line references: 【23†L216-L220】
@@ -55,7 +68,7 @@ enum ContentCleaner {
             )
         }
 
-        cache.setObject(result as NSString, forKey: key)
+        if useCache { cache.setObject(result as NSString, forKey: key) }
         return result
     }
 
@@ -166,5 +179,11 @@ enum ContentCleaner {
             result.replaceSubrange(startRange.lowerBound..<endRange.upperBound, with: "")
         }
         return result
+    }
+
+    /// 看得见的文字：清洗后，非 user 再剥思考链。对话内查找与全文索引同一口径（粟粟 S5）
+    static func visibleText(_ content: String, isUser: Bool, cacheKey: String? = nil, cached: Bool = true) -> String {
+        let cleaned = clean(content, cacheKey: cacheKey, cached: cached)
+        return isUser ? cleaned : extractThinking(from: cleaned).content
     }
 }

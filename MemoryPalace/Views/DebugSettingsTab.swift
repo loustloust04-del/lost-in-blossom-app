@@ -75,6 +75,25 @@ struct IOSDebugPage: View {
             }
             .listRowBackground(Theme.mainBg)
 
+            // 全文索引状态（10-03）
+            Section {
+                let st = SearchIndexer.shared.state
+                HStack {
+                    Text("全文索引").font(.system(size: Theme.F.body)).foregroundColor(Theme.textPrimary)
+                    Spacer()
+                    Group {
+                        switch st.status {
+                        case .idle: Text("还没开始")
+                        case .building(let p): Text("建索引中 \(Int(p * 100))%")
+                        case .ready: Text("就绪 · \(st.docCount) 条")
+                        case .failed(let e): Text("失败：\(e)").lineLimit(2)
+                        }
+                    }
+                    .font(.system(size: 12)).foregroundColor(Theme.textMuted)
+                }
+            } header: { Text("搜索") }
+            .listRowBackground(Theme.mainBg)
+
             // 面包屑日志（09-13 兔兔：「面包屑在哪里呢」——原来只有写没有看的地方）
             Section {
                 let log = BreadcrumbLog.shared

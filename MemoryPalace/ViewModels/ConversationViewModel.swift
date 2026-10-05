@@ -46,12 +46,35 @@ final class ConversationViewModel {
     /// 空白，往下划一下才回来」，长对话（>60 条）才有这一挤所以更明显。改记起点后追加
     /// 消息只让窗口自然变长，顶上不动；起点只在切对话（reset）和上滑扩窗（expand）时变。
     var renderStart: Int = 0
+    /// 窗口终点（不含）。nil = 一直到最新。搜索定位到很早的消息时只画「目标 ±一段」，
+    /// 不把它后面上千条全挂上（10-03 兔兔「定位很慢」）；回到最新/切对话时清掉
+    var renderEnd: Int? = nil
 
     /// 实际交给 ForEach 的那一段
     var visiblePath: [MessageNode] {
+        let end = min(renderEnd ?? currentPath.count, currentPath.count)
         // 起点越界（路径被重建得比起点还短）时整条给出去，宁可多画也不能画空
-        guard renderStart > 0, renderStart < currentPath.count else { return currentPath }
-        return Array(currentPath[renderStart...])
+        guard renderStart >= 0, renderStart < end else { return currentPath }
+        if renderStart == 0 && end == currentPath.count { return currentPath }
+        return Array(currentPath[renderStart..<end])
+    }
+    /// 窗口后面（更新的那边）还有没画的
+    var hasMoreBelow: Bool { (renderEnd ?? currentPath.count) < currentPath.count }
+    func expandRenderWindowDown() {
+        guard let e = renderEnd else { return }
+        let n = e + Self.renderWindowStep
+        renderEnd = n >= currentPath.count ? nil : n
+    }
+    /// 定位到某条：窗口挪到它附近（前 12 条 + 后 24 条），返回是否改了窗口
+    @discardableResult
+    func focusRenderWindow(on nodeId: String) -> Bool {
+        guard let idx = currentPath.firstIndex(where: { $0.id == nodeId }) else { return false }
+        let end = min(renderEnd ?? currentPath.count, currentPath.count)
+        if idx >= renderStart && idx < end { return false }      // 已经在窗口里
+        renderStart = max(0, idx - 12)
+        let e = idx + 24
+        renderEnd = e >= currentPath.count ? nil : e
+        return true
     }
 
     var hasMoreAbove: Bool { renderStart > 0 && renderStart < currentPath.count }
@@ -63,7 +86,7 @@ final class ConversationViewModel {
     }
 
     /// 切对话 / 重建路径时收回窗口（按当时的 currentPath 算，须在 currentPath 赋值之后调）
-    func resetRenderWindow() { renderStart = max(0, currentPath.count - Self.initialRenderWindow) }
+    func resetRenderWindow() { renderStart = max(0, currentPath.count - Self.initialRenderWindow); renderEnd = nil }
     var branchChoices: [String: Int] = [:] // nodeId -> chosen child index
     var isLoading: Bool = false
 
