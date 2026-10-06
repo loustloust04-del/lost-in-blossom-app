@@ -378,7 +378,7 @@ struct CardFlowView: View {
 
     /// 列表里的一行（10-05 从 body 里拆出来：body 太大，编��器类型检查超时）
     @ViewBuilder private func messageRow(_ node: MessageNode) -> some View {
-                    makeBubbleView(for: node)
+                    multiSelectWrap(node, makeBubbleView(for: node))
                         .flippedUpsideDown()   // cell 翻回正
                         .id(node.id)
                         // 10-05 往上翻不丝滑：离窗口最老那头还剩 6 条就提前扩一批（预取），
@@ -397,6 +397,59 @@ struct CardFlowView: View {
                                 stickerVM.bubblePositions[node.id] = midY
                             }
                         )
+    }
+
+    /// 多选态：左边一个勾选圈，整行点了切换；不在多选态原样
+    @ViewBuilder private func multiSelectWrap<V: View>(_ node: MessageNode, _ bubble: V) -> some View {
+        if let sel = viewModel.multiSelect {
+            let on = sel.contains(node.id)
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 22))
+                    .foregroundColor(on ? Theme.branchIndicator : Theme.textMuted.opacity(0.5))
+                    .padding(.leading, 10)
+                bubble.allowsHitTesting(false)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                var s = sel
+                if on { s.remove(node.id) } else { s.insert(node.id) }
+                viewModel.multiSelect = s
+                UISelectionFeedbackGenerator().selectionChanged()
+            }
+        } else {
+            bubble
+        }
+    }
+
+    /// 多选底栏：复制 / 删除 / 取消
+    private var multiSelectBar: some View {
+        let sel = viewModel.multiSelect ?? []
+        let nodes = viewModel.currentPath.filter { sel.contains($0.id) }
+        return HStack(spacing: 18) {
+            Text("已选 \(nodes.count) 条").font(.system(size: 13, weight: .medium)).foregroundColor(Theme.textPrimary)
+            Spacer()
+            Button {
+                let text = nodes.map { n in
+                    (n.role == "assistant" ? "\(profileManager?.currentProfile.assistantName ?? "Caelum")：" : "我：")
+                    + ContentCleaner.visibleText(n.content, isUser: n.role == "user", cacheKey: n.id)
+                }.joined(separator: "\n\n")
+                UIPasteboard.general.string = text
+                HapticService.shared.copyText()
+                ToastCenter.shared.show("复制了 \(nodes.count) 条")
+                viewModel.multiSelect = nil
+            } label: { Label("复制", systemImage: "doc.on.doc").font(.system(size: 14)) }
+            .disabled(nodes.isEmpty)
+            Button(role: .destructive) {
+                nodes.forEach { viewModel.softDelete($0) }
+                ToastCenter.shared.show("删了 \(nodes.count) 条（回收站能找回）")
+                viewModel.multiSelect = nil
+            } label: { Label("删除", systemImage: "trash").font(.system(size: 14)) }
+            .disabled(nodes.isEmpty)
+            Button("取消") { viewModel.multiSelect = nil }.font(.system(size: 14))
+        }
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .background(.ultraThinMaterial)
     }
 
     /// 往上翻预取：离窗口最老那头还剩 6 条就提前扩一批
@@ -790,6 +843,8 @@ struct CardFlowView: View {
                         } else if stickerVM.isEditingStickers {
                             // 编辑模式：工具栏在 overlay，这里只占位
                             Color.clear.frame(height: 60)
+                        } else if viewModel.multiSelect != nil {
+                            multiSelectBar
                         } else if let pm = providerManager {
                             VStack(spacing: 0) {
                                 // 回底按钮已挪到 ScrollView 的 overlay（B round 3）：它在 safeAreaInset 里会把
@@ -2693,6 +2748,10 @@ struct BubbleView: View {
             onTogglePin()
             HapticService.shared.longPress()
             onNotice?(willPin ? "已钉住" : "已取消钉住")
+        })
+        specs.append(MenuActionSpec(title: "多选", systemImage: "checklist") {
+            viewModel.multiSelect = [node.id]
+            HapticService.shared.longPress()
         })
         specs.append(MenuActionSpec(title: "引用", systemImage: "arrowshape.turn.up.left") {
             QuoteDraft.shared.set(from: node, assistantName: UserDefaults.standard.string(forKey: "assistantName") ?? "Caelum")

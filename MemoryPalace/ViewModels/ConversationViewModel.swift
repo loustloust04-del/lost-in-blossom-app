@@ -159,6 +159,8 @@ final class ConversationViewModel {
 
     // In-conversation search
     var inConvSearchKeyword: String = ""
+    /// 多选消息（10-07，粟粟同款）：nil = 没在多选；非 nil = 选中的 node id
+    var multiSelect: Set<String>? = nil
 
     var inConvMatches: [String] = []   // matched node IDs
     var inConvMatchIndex: Int = -1
