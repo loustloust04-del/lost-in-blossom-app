@@ -1063,7 +1063,7 @@ extension ConversationViewModel {
             guard let self else { return }
             let n = self.manualReplayAdded
             self.manualReplayAdded = 0
-            ToastCenter.shared.show(n > 0 ? "补回了 \(n) 条" : "没有漏掉的，都在了")
+            MainActor.assumeIsolated { ToastCenter.shared.show(n > 0 ? "补回了 \(n) 条" : "没有漏掉的，都在了") }
         }
 
         CCBridgeWebSocketClient.shared.unhandledReplyHandler = { [weak self] chatId, content in
