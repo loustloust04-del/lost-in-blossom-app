@@ -654,6 +654,26 @@ extension ConversationViewModel {
             userNode.setSegments(segs)
         }
         context.insert(userNode)
+        // 10-07 她自己的语音条下面显示转写：本机识别，完了写进 audioRef 的 script
+        if voice != nil, let segs = attachmentSegments,
+           let rel = segs.compactMap({ seg -> String? in if case .audioRef(_, _, let p, _, _) = seg { return p } else { return nil } }).first {
+            let pid = conversation.profileId
+            Task { [weak userNode] in
+                guard let data = AttachmentStore.read(rel, profileId: pid) else { return }
+                let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("asr-\(UUID().uuidString).m4a")
+                guard (try? data.write(to: tmp)) != nil else { return }
+                defer { try? FileManager.default.removeItem(at: tmp) }
+                guard let text = await VoiceTranscriber.transcribe(url: tmp), !text.isEmpty, let userNode else { return }
+                await MainActor.run {
+                    let updated: [MessageSegment] = (userNode.segments ?? []).map { seg in
+                        if case .audioRef(let n, let m, let p, let d, _) = seg { return .audioRef(name: n, mime: m, path: p, duration: d, script: text) }
+                        return seg
+                    }
+                    userNode.setSegments(updated)
+                    try? context.save()
+                }
+            }
+        }
         // 旧图转述（粟粟 M7）：API 车道发了图 → 后台让主模型写一句描述存起来，三条之后替原图省 token
         if !isCCLane, userContentType == "multimodal_text" {
             ImageSummaryStore.summarizeInBackground(nodeId: userNodeId, content: userContent, model: model, providerManager: providerManager)

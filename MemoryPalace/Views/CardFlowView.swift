@@ -3191,14 +3191,25 @@ struct BubbleView: View {
                 // 语音条胶囊（audioRef 不进 segments 渲染，这里单独画）
                 // D4：气泡模式下语音已在 BubbleModeRow 里一条一泡，外侧胶囊不再画
                 if !chatBubbleMode, let segs = node.segments {
-                    let voiceSegs: [(path: String, duration: Double?)] = segs.compactMap { seg in
-                        if case .audioRef(_, _, let p, let d, _) = seg { return (p, d) }
+                    let voiceSegs: [(path: String, duration: Double?, script: String?)] = segs.compactMap { seg in
+                        if case .audioRef(_, _, let p, let d, let sc) = seg { return (p, d, sc) }
                         return nil
                     }
                     ForEach(voiceSegs, id: \.path) { v in
-                        VoiceCapsuleView(path: v.path, duration: v.duration,
-                                         nodeId: node.id, profileId: node.profileId, isUser: isUser)
-                            .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+                        VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
+                            VoiceCapsuleView(path: v.path, duration: v.duration,
+                                             nodeId: node.id, profileId: node.profileId, isUser: isUser)
+                            // 10-07 她自己的语音：本机转写好了就显示在胶囊下面（长按能复制）
+                            if isUser, let sc = v.script, !sc.isEmpty {
+                                Text(sc)
+                                    .font(.system(size: 12.5))
+                                    .foregroundColor(Theme.textMuted)
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(maxWidth: 260, alignment: .trailing)
+                                    .contextMenu { Button { UIPasteboard.general.string = sc } label: { Label("复制文字", systemImage: "doc.on.doc") } }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
                     }
                 }
                 // 生成中：画同形胶囊的「成型态」，而不是让占位行以纯文字露脸
