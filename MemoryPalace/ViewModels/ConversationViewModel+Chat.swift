@@ -1044,6 +1044,7 @@ extension ConversationViewModel {
             let incoming = ContentCleaner.visibleText(content, isUser: false, cached: false)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !incoming.isEmpty || file != nil else { return }
+            self.manualReplaySeen += 1
             let desc = FetchDescriptor<MessageNode>(
                 predicate: #Predicate<MessageNode> { $0.conversationId == chatId && $0.role == "assistant" },
                 sortBy: [SortDescriptor(\MessageNode.createTime, order: .reverse)]
@@ -1054,7 +1055,11 @@ extension ConversationViewModel {
                 let t = ContentCleaner.visibleText(n.content, isUser: false, cached: false).trimmingCharacters(in: .whitespacesAndNewlines)
                 return !incoming.isEmpty && (t == incoming || (t.count > 20 && incoming.count > 20 && (t.hasPrefix(incoming) || incoming.hasPrefix(t))))
             }
-            if dup { return }
+            if dup {
+                BreadcrumbLog.shared.add("🔁", "补收·已有：\(incoming.prefix(24))")
+                return
+            }
+            BreadcrumbLog.shared.add("🔁", "补收·补上：\(incoming.prefix(24))")
             let full = (thinking.map { "[thinking]\($0)[/thinking]" } ?? "") + content
             self.appendCCMessage(chatId: chatId, content: full, context: context, file: file)
             self.manualReplayAdded += 1
@@ -1062,8 +1067,14 @@ extension ConversationViewModel {
         CCBridgeWebSocketClient.shared.manualReplayDone = { [weak self] _ in
             guard let self else { return }
             let n = self.manualReplayAdded
+            let seen = self.manualReplaySeen
             self.manualReplayAdded = 0
-            MainActor.assumeIsolated { ToastCenter.shared.show(n > 0 ? "补回了 \(n) 条" : "没有漏掉的，都在了") }
+            self.manualReplaySeen = 0
+            BreadcrumbLog.shared.add("🔁", "补收结束：hub 给了 \(seen) 条，补上 \(n) 条")
+            MainActor.assumeIsolated {
+                ToastCenter.shared.show(seen == 0 ? "主人那边这条对话还没有可补的记录"
+                                        : (n > 0 ? "补回了 \(n) 条" : "最近 \(seen) 条都在了，没有漏掉的"))
+            }
         }
 
         CCBridgeWebSocketClient.shared.unhandledReplyHandler = { [weak self] chatId, content in
