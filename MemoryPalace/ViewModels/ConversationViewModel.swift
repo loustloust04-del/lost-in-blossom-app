@@ -159,6 +159,8 @@ final class ConversationViewModel {
 
     // In-conversation search
     var inConvSearchKeyword: String = ""
+    /// 一键补发这一轮补回了几条（10-05）
+    var manualReplayAdded = 0
     var inConvMatches: [String] = []   // matched node IDs
     var inConvMatchIndex: Int = -1
 

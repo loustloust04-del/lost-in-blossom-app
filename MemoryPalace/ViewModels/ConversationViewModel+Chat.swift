@@ -1038,6 +1038,34 @@ extension ConversationViewModel {
             }
         }
 
+        // 10-05 一键补发：hub 回来的最近 N 条，已经有了的（按看得见的正文比）跳过，缺的补上
+        CCBridgeWebSocketClient.shared.manualReplayHandler = { [weak self] chatId, content, thinking, file in
+            guard let self else { return }
+            let incoming = ContentCleaner.visibleText(content, isUser: false, cached: false)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !incoming.isEmpty || file != nil else { return }
+            let desc = FetchDescriptor<MessageNode>(
+                predicate: #Predicate<MessageNode> { $0.conversationId == chatId && $0.role == "assistant" },
+                sortBy: [SortDescriptor(\MessageNode.createTime, order: .reverse)]
+            )
+            var d = desc; d.fetchLimit = 120
+            let existing = (try? context.fetch(d)) ?? []
+            let dup = existing.contains { n in
+                let t = ContentCleaner.visibleText(n.content, isUser: false, cached: false).trimmingCharacters(in: .whitespacesAndNewlines)
+                return !incoming.isEmpty && (t == incoming || (t.count > 20 && incoming.count > 20 && (t.hasPrefix(incoming) || incoming.hasPrefix(t))))
+            }
+            if dup { return }
+            let full = (thinking.map { "[thinking]\($0)[/thinking]" } ?? "") + content
+            self.appendCCMessage(chatId: chatId, content: full, context: context, file: file)
+            self.manualReplayAdded += 1
+        }
+        CCBridgeWebSocketClient.shared.manualReplayDone = { [weak self] _ in
+            guard let self else { return }
+            let n = self.manualReplayAdded
+            self.manualReplayAdded = 0
+            ToastCenter.shared.show(n > 0 ? "补回了 \(n) 条" : "没有漏掉的，都在了")
+        }
+
         CCBridgeWebSocketClient.shared.unhandledReplyHandler = { [weak self] chatId, content in
             guard let self else { return }
             // hub 在 reply 前先广播 cc_thinking；和单发路径一样嵌入 content

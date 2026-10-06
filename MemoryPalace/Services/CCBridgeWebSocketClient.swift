@@ -116,6 +116,19 @@ final class CCBridgeWebSocketClient: NSObject {
         q.setSpecific(key: CCBridgeWebSocketClient.handlersQueueKey, value: true)
         return q
     }()
+    /// 一键补发（10-05）：hub 回的 manual 帧交给它；VM 负责按内容去重
+    @ObservationIgnored var manualReplayHandler: ((_ chatId: String, _ content: String, _ thinking: String?, _ file: PendingChatAttachment?) -> Void)?
+    @ObservationIgnored var manualReplayDone: ((_ chatId: String) -> Void)?
+
+    /// 向 hub 要这条对话最近的回复（hub 存最近 30 条，带思考链）
+    func requestReplay(chatId: String, limit: Int = 20) {
+        send(["type": "replay_request", "chat_id": chatId, "limit": limit]) { err in
+            DispatchQueue.main.async {
+                ToastCenter.shared.show(err == nil ? "正在向主人那边要最近的回复…" : "hub 没连上，等连上再试")
+            }
+        }
+    }
+
     /// 已 deliver 的 reply_id（持久化）：hub 重连时 replay 最近 60s reply、offline 文件
     /// 部分投递后还会重投——纯内存版在 App 被杀重开后失忆，补发的旧聊天全部重复入库
     ///（真机 bug："聊完天 CC 桥又把之前的聊天发一遍"）。改成 UserDefaults 持久 +
@@ -666,6 +679,18 @@ final class CCBridgeWebSocketClient: NSObject {
                 }()
                 // 09-21：hub 现在把思考链也塞进 reply 帧（补发/离线队列同样带），不再只靠前一帧 cc_thinking
                 let embeddedThinking = (obj["thinking"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                // 10-05 一键补发：她点「补收」要回来的帧，不看已读标记（可能「收到了但没长出来」），
+                // 直接交给 VM 按内容去重后补上
+                if (obj["manual"] as? Bool) == true {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.manualReplayHandler?(chatId, content, embeddedThinking, incomingFile)
+                    }
+                    if let replyId { handlersQueue.async { [weak self] in self?.commitReplySeen(replyId) } }
+                    if (obj["last"] as? Bool) == true {
+                        DispatchQueue.main.async { [weak self] in self?.manualReplayDone?(chatId) }
+                    }
+                    return
+                }
                 handlersQueue.async { [weak self] in
                     guard let self else { return }
                     if let replyId, self.isReplySeen(replyId) {

@@ -850,6 +850,10 @@ struct CardFlowView: View {
             }
             .animation(.easeInOut(duration: 0.25), value: showStickerPanel)
             .animation(.easeInOut(duration: 0.25), value: stickerVM.isEditingStickers)
+            .onReceive(NotificationCenter.default.publisher(for: .toggleInConvSearch)) { _ in
+                showInConvSearch.toggle()
+                if showInConvSearch { inConvSearchFocused = true } else { viewModel.clearInConvSearch() }
+            }
             .background {
                 // Hidden button for Cmd+F shortcut
                 Button("") {

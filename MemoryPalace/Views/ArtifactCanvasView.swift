@@ -567,4 +567,6 @@ struct ArtifactCanvasSheet: View {
 extension Notification.Name {
     /// 网页卡 mp.ask：往她的输入框里放一句话
     static let composerInsert = Notification.Name("composerInsert")
+    /// ⋯ 菜单「在对话里找」（10-05）
+    static let toggleInConvSearch = Notification.Name("toggleInConvSearch")
 }
