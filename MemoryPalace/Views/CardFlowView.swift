@@ -460,16 +460,26 @@ struct CardFlowView: View {
         prewarmMarkdown(before: viewModel.renderStart)
     }
 
-    /// 回底钮
+    /// 回底钮（10-07 兔兔「按钮彻底失效了」：上一版纯靠 setContentOffset 动画，被「读历史时补偿位移」
+    /// 那套 KVO 半路掐断，等于没动。照粟粟改：SwiftUI 动画 scrollTo 哨兵；很远时先瞬移到离底 1.2 屏；
+    /// 动画结束后再走一次老的强制钉底（以前一直好用的那条），保证最后一定落到底）
     private func scrollToBottomTapped(proxy: ScrollViewProxy) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         if viewModel.hasMoreBelow {
             withAnimation(.none) { viewModel.resetRenderWindow() }
             scrollToLastMessage(proxy: proxy, force: true)
-        } else {
-            scrollHost.animateToBottom()
+            return
         }
+        if let sv = scrollHost.scrollView {
+            let bottomY = -sv.adjustedContentInset.top
+            if sv.contentOffset.y - bottomY > sv.bounds.height * 2 {
+                sv.setContentOffset(CGPoint(x: sv.contentOffset.x, y: bottomY + sv.bounds.height * 1.2), animated: false)
+            }
+        }
+        withAnimation(.easeOut(duration: 0.3)) { proxy.scrollTo("__bottom_sentinel__", anchor: .top) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { scrollToLastMessage(proxy: proxy, force: true) }
     }
+
 
     /// 顶栏下：置顶条 + 正在放歌胶囊
     private var topFloatingStack: some View {
