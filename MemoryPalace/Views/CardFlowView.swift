@@ -481,6 +481,24 @@ struct CardFlowView: View {
     }
 
 
+    /// 不画东西，只挂通知监听（编辑提交 / 多选 / ⋯ 菜单「在对话里找」）
+    private var notificationListeners: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onReceive(NotificationCenter.default.publisher(for: .submitEditMessage)) { n in
+                guard let id = n.userInfo?["nodeId"] as? String, let t = n.userInfo?["text"] as? String,
+                      let node = viewModel.nodeMap[id] else { return }
+                makeEditAction(for: node)?(t)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .startMultiSelect)) { n in
+                if let id = n.userInfo?["nodeId"] as? String { viewModel.multiSelect = [id] }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .toggleInConvSearch)) { _ in
+                showInConvSearch.toggle()
+                if showInConvSearch { inConvSearchFocused = true } else { viewModel.clearInConvSearch() }
+            }
+    }
+
     /// 顶栏下：置顶条 + 正在放歌胶囊
     private var topFloatingStack: some View {
         VStack(spacing: 6) {
@@ -915,18 +933,7 @@ struct CardFlowView: View {
             }
             .animation(.easeInOut(duration: 0.25), value: showStickerPanel)
             .animation(.easeInOut(duration: 0.25), value: stickerVM.isEditingStickers)
-            .onReceive(NotificationCenter.default.publisher(for: .submitEditMessage)) { n in
-                guard let id = n.userInfo?["nodeId"] as? String, let t = n.userInfo?["text"] as? String,
-                      let node = viewModel.nodeMap[id] else { return }
-                makeEditAction(for: node)?(t)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .startMultiSelect)) { n in
-                if let id = n.userInfo?["nodeId"] as? String { viewModel.multiSelect = [id] }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .toggleInConvSearch)) { _ in
-                showInConvSearch.toggle()
-                if showInConvSearch { inConvSearchFocused = true } else { viewModel.clearInConvSearch() }
-            }
+            .background { notificationListeners }   // 编辑提交 / 多选 / 在对话里找（10-07 拆出 body 减轻类型检查）
             .background {
                 // Hidden button for Cmd+F shortcut
                 Button("") {
