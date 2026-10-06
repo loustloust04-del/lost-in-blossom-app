@@ -905,6 +905,9 @@ struct CardFlowView: View {
             }
             .animation(.easeInOut(duration: 0.25), value: showStickerPanel)
             .animation(.easeInOut(duration: 0.25), value: stickerVM.isEditingStickers)
+            .onReceive(NotificationCenter.default.publisher(for: .startMultiSelect)) { n in
+                if let id = n.userInfo?["nodeId"] as? String { viewModel.multiSelect = [id] }
+            }
             .onReceive(NotificationCenter.default.publisher(for: .toggleInConvSearch)) { _ in
                 showInConvSearch.toggle()
                 if showInConvSearch { inConvSearchFocused = true } else { viewModel.clearInConvSearch() }
@@ -2750,7 +2753,8 @@ struct BubbleView: View {
             onNotice?(willPin ? "已钉住" : "已取消钉住")
         })
         specs.append(MenuActionSpec(title: "多选", systemImage: "checklist") {
-            viewModel.multiSelect = [node.id]
+            // 气泡视图里没有 viewModel，发通知让聊天页进多选态
+            NotificationCenter.default.post(name: .startMultiSelect, object: nil, userInfo: ["nodeId": node.id])
             HapticService.shared.longPress()
         })
         specs.append(MenuActionSpec(title: "引用", systemImage: "arrowshape.turn.up.left") {

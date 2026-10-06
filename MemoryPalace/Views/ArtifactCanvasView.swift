@@ -569,4 +569,6 @@ extension Notification.Name {
     static let composerInsert = Notification.Name("composerInsert")
     /// ⋯ 菜单「在对话里找」（10-05）
     static let toggleInConvSearch = Notification.Name("toggleInConvSearch")
+    /// 长按菜单「多选」（10-07）
+    static let startMultiSelect = Notification.Name("startMultiSelect")
 }
