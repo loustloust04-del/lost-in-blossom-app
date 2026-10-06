@@ -117,8 +117,10 @@ final class CCBridgeWebSocketClient: NSObject {
         return q
     }()
     /// 一键补发（10-05）：hub 回的 manual 帧交给它；VM 负责按内容去重
-    @ObservationIgnored var manualReplayHandler: ((_ chatId: String, _ content: String, _ thinking: String?, _ file: PendingChatAttachment?) -> Void)?
-    @ObservationIgnored var manualReplayDone: ((_ chatId: String) -> Void)?
+    /// 一键补发：hub 回的 manual 帧先攒着，last 到了整批交给 manualReplayBatch（VM 按原时间插回原位）
+    struct ManualReply { let content: String; let thinking: String?; let file: PendingChatAttachment?; let ts: Double }
+    @ObservationIgnored private var manualBuffer: [String: [ManualReply]] = [:]
+    @ObservationIgnored var manualReplayBatch: ((_ chatId: String, _ items: [ManualReply]) -> Void)?
 
     /// 向 hub 要这条对话最近的回复（hub 存最近 30 条，带思考链）
     func requestReplay(chatId: String, limit: Int = 20) {
@@ -682,13 +684,20 @@ final class CCBridgeWebSocketClient: NSObject {
                 // 10-05 一键补发：她点「补收」要回来的帧，不看已读标记（可能「收到了但没长出来」），
                 // 直接交给 VM 按内容去重后补上
                 if (obj["manual"] as? Bool) == true {
+                    let ts = (obj["ts"] as? Double) ?? (obj["ts"] as? NSNumber)?.doubleValue ?? 0
+                    let isLast = (obj["last"] as? Bool) == true
                     DispatchQueue.main.async { [weak self] in
-                        self?.manualReplayHandler?(chatId, content, embeddedThinking, incomingFile)
+                        guard let self else { return }
+                        if !content.isEmpty || incomingFile != nil {
+                            self.manualBuffer[chatId, default: []].append(
+                                ManualReply(content: content, thinking: embeddedThinking, file: incomingFile, ts: ts))
+                        }
+                        if isLast {
+                            let items = self.manualBuffer.removeValue(forKey: chatId) ?? []
+                            self.manualReplayBatch?(chatId, items)
+                        }
                     }
                     if let replyId { handlersQueue.async { [weak self] in self?.commitReplySeen(replyId) } }
-                    if (obj["last"] as? Bool) == true {
-                        DispatchQueue.main.async { [weak self] in self?.manualReplayDone?(chatId) }
-                    }
                     return
                 }
                 handlersQueue.async { [weak self] in

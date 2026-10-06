@@ -1038,43 +1038,9 @@ extension ConversationViewModel {
             }
         }
 
-        // 10-05 一键补发：hub 回来的最近 N 条，已经有了的（按看得见的正文比）跳过，缺的补上
-        CCBridgeWebSocketClient.shared.manualReplayHandler = { [weak self] chatId, content, thinking, file in
-            guard let self else { return }
-            let incoming = ContentCleaner.visibleText(content, isUser: false, cached: false)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !incoming.isEmpty || file != nil else { return }
-            self.manualReplaySeen += 1
-            let desc = FetchDescriptor<MessageNode>(
-                predicate: #Predicate<MessageNode> { $0.conversationId == chatId && $0.role == "assistant" },
-                sortBy: [SortDescriptor(\MessageNode.createTime, order: .reverse)]
-            )
-            var d = desc; d.fetchLimit = 120
-            let existing = (try? context.fetch(d)) ?? []
-            let dup = existing.contains { n in
-                let t = ContentCleaner.visibleText(n.content, isUser: false, cached: false).trimmingCharacters(in: .whitespacesAndNewlines)
-                return !incoming.isEmpty && (t == incoming || (t.count > 20 && incoming.count > 20 && (t.hasPrefix(incoming) || incoming.hasPrefix(t))))
-            }
-            if dup {
-                BreadcrumbLog.shared.add("🔁", "补收·已有：\(incoming.prefix(24))")
-                return
-            }
-            BreadcrumbLog.shared.add("🔁", "补收·补上：\(incoming.prefix(24))")
-            let full = (thinking.map { "[thinking]\($0)[/thinking]" } ?? "") + content
-            self.appendCCMessage(chatId: chatId, content: full, context: context, file: file)
-            self.manualReplayAdded += 1
-        }
-        CCBridgeWebSocketClient.shared.manualReplayDone = { [weak self] _ in
-            guard let self else { return }
-            let n = self.manualReplayAdded
-            let seen = self.manualReplaySeen
-            self.manualReplayAdded = 0
-            self.manualReplaySeen = 0
-            BreadcrumbLog.shared.add("🔁", "补收结束：hub 给了 \(seen) 条，补上 \(n) 条")
-            MainActor.assumeIsolated {
-                ToastCenter.shared.show(seen == 0 ? "主人那边这条对话还没有可补的记录"
-                                        : (n > 0 ? "补回了 \(n) 条" : "最近 \(seen) 条都在了，没有漏掉的"))
-            }
+        // 10-05 一键补发：hub 回来的最近 N 条整批到，已有的跳过，缺的按原来的时间插回原位
+        CCBridgeWebSocketClient.shared.manualReplayBatch = { [weak self] chatId, items in
+            self?.applyManualReplay(chatId: chatId, items: items, context: context)
         }
 
         CCBridgeWebSocketClient.shared.unhandledReplyHandler = { [weak self] chatId, content in
@@ -1103,6 +1069,84 @@ extension ConversationViewModel {
                 #endif
             }
         }
+    }
+
+    /// 一键补发（10-05 第二版）：第一版把缺的接在对话最后、还经过 appendCCMessage 的各种分支，
+    /// 兔兔实测「提示补回了，但哪儿都看不到」。这版只在她正开着的这段对话里做，按 hub 记的原始时间
+    /// 找到前一条，把漏掉的那条插在它后面、把后一条重新挂到它下面——补完往上翻，空的地方就填上了。
+    func applyManualReplay(chatId: String, items: [CCBridgeWebSocketClient.ManualReply], context: ModelContext) {
+        guard let conversation = selectedConversation, conversation.id == chatId else {
+            BreadcrumbLog.shared.add("🔁", "补收：不是当前打开的对话，跳过")
+            MainActor.assumeIsolated { ToastCenter.shared.show("先打开那段对话再点补收") }
+            return
+        }
+        if items.isEmpty {
+            BreadcrumbLog.shared.add("🔁", "补收：hub 这条对话没有记录")
+            MainActor.assumeIsolated { ToastCenter.shared.show("主人那边这条对话还没有可补的记录") }
+            return
+        }
+        // 已有的：这条对话里所有他说过的话（看得见的正文）
+        let cid = chatId
+        let all = (try? context.fetch(FetchDescriptor<MessageNode>(
+            predicate: #Predicate<MessageNode> { $0.conversationId == cid && $0.role == "assistant" }))) ?? []
+        let have = all.map { ContentCleaner.visibleText($0.content, isUser: false, cached: false).trimmingCharacters(in: .whitespacesAndNewlines) }
+        func isDup(_ t: String) -> Bool {
+            have.contains { h in h == t || (h.count > 20 && t.count > 20 && (h.hasPrefix(t) || t.hasPrefix(h))) }
+        }
+        var added = 0
+        for it in items.sorted(by: { $0.ts < $1.ts }) {
+            let visible = ContentCleaner.visibleText(it.content, isUser: false, cached: false).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !visible.isEmpty && isDup(visible) {
+                BreadcrumbLog.shared.add("🔁", "补收·已有：\(visible.prefix(20))")
+                continue
+            }
+            let when = it.ts > 0 ? Date(timeIntervalSince1970: it.ts / 1000) : Date()
+            // 插在「时间不晚于它」的最后一条后面
+            let idx = currentPath.lastIndex(where: { ($0.createTime ?? .distantPast) <= when }) ?? (currentPath.count - 1)
+            guard idx >= 0, idx < currentPath.count else { continue }
+            let prev = currentPath[idx]
+            let next: MessageNode? = idx + 1 < currentPath.count ? currentPath[idx + 1] : nil
+            let full = (it.thinking.map { "[thinking]\($0)[/thinking]" } ?? "") + it.content
+            let node = MessageNode(id: UUID().uuidString, role: "assistant", content: full, contentType: "text",
+                                   createTime: when, parentId: prev.id, childrenIds: [],
+                                   conversationId: conversation.id, profileId: conversation.profileId)
+            node.senderName = "CC Caelum"
+            node.senderId = "cc-caelum"
+            if let f = it.file {
+                if f.isImage, let img = f.imageData {
+                    node.setSegments([.text(ContentCleaner.extractThinking(from: full).content), .image(name: f.name, type: f.mimeType, data: img)])
+                } else if let bytes = f.fileData {
+                    node.setSegments([.text(ContentCleaner.extractThinking(from: full).content), .fileData(name: f.name, mime: f.mimeType ?? "application/octet-stream", data: bytes)])
+                }
+            }
+            context.insert(node)
+            // 接线：prev → node → next
+            if let next {
+                prev.childrenIds.removeAll { $0 == next.id }
+                next.parentId = node.id
+                node.childrenIds = [next.id]
+                effectiveChildrenMap[prev.id]?.removeAll { $0 == next.id }
+                effectiveChildrenMap[node.id] = [next.id]
+            } else {
+                effectiveChildrenMap[node.id] = []
+                conversation.currentNodeId = node.id
+            }
+            prev.childrenIds.append(node.id)
+            effectiveChildrenMap[prev.id, default: []].append(node.id)
+            nodeMap[node.id] = node
+            currentPath.insert(node, at: idx + 1)
+            added += 1
+            BreadcrumbLog.shared.add("🔁", "补收·插回 #\(idx + 1)：\(visible.prefix(20))")
+        }
+        if added > 0 {
+            conversation.nodeCount = currentPath.filter { ($0.role == "user" || $0.role == "assistant") && !$0.content.isEmpty }.count
+            conversation.updateTime = Date()
+            markConversationDirty()
+            context.saveOrReport("补收的消息")
+        }
+        BreadcrumbLog.shared.add("🔁", "补收结束：hub 给了 \(items.count) 条，插回 \(added) 条")
+        let msg = added > 0 ? "补回了 \(added) 条，插在原来的位置" : "最近 \(items.count) 条都在了，没有漏掉的"
+        MainActor.assumeIsolated { ToastCenter.shared.show(msg) }
     }
 
     /// 把一条 CC 消息作为独立 assistant 节点插入对应对话。
