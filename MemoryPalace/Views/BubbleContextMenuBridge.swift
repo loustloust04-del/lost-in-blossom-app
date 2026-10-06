@@ -44,6 +44,7 @@ struct BubbleMenuLiftWrapper<Content: View>: View {
     private let content: () -> Content
     private let previewContent: () -> AnyView
     private let reactionTarget: ChatReactionTarget?
+    private let infoText: String?
     @State private var lifted = false
 
     /// previewContent 不传 = 活副本原样渲 content；传了 = 浮层里渲变体
@@ -54,10 +55,12 @@ struct BubbleMenuLiftWrapper<Content: View>: View {
         tailBackdrop: Bool = false,
         actions: [MenuActionSpec],
         reactionTarget: ChatReactionTarget? = nil,
+        infoText: String? = nil,
         @ViewBuilder content: @escaping () -> Content,
         previewContent: (() -> AnyView)? = nil
     ) {
         self.reactionTarget = reactionTarget
+        self.infoText = infoText
         self.isUser = isUser
         self.cornerRadius = CGFloat(cornerRadius)
         self.tailBackdrop = tailBackdrop
@@ -72,11 +75,12 @@ struct BubbleMenuLiftWrapper<Content: View>: View {
         tailBackdrop: Bool = false,
         actions: [MenuActionSpec],
         reactionTarget: ChatReactionTarget? = nil,
+        infoText: String? = nil,
         previewContent: @escaping () -> AnyView,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.init(isUser: isUser, cornerRadius: cornerRadius, tailBackdrop: tailBackdrop, actions: actions,
-                  reactionTarget: reactionTarget, content: content, previewContent: previewContent)
+                  reactionTarget: reactionTarget, infoText: infoText, content: content, previewContent: previewContent)
     }
 
     var body: some View {
@@ -94,7 +98,8 @@ struct BubbleMenuLiftWrapper<Content: View>: View {
                 tailBackdrop: tailBackdrop,
                 previewBuilder: previewContent,
                 onMenuVisibleChanged: { lifted = $0 },
-                reactionTarget: reactionTarget
+                reactionTarget: reactionTarget,
+                infoText: infoText
             ))
         }
         #else
@@ -123,6 +128,8 @@ struct BubbleMenuSession {
     let onRestore: () -> Void
     /// 表情回应的目标（nil = 不出表情条）
     var reactionTarget: ChatReactionTarget? = nil
+    /// 菜单底部一行小信息：这条的时间 · 字数 · token（10-07，粟粟同款）
+    var infoText: String? = nil
 }
 
 final class BubbleMenuOverlayModel: ObservableObject {
@@ -150,6 +157,7 @@ final class BubbleMenuMarkerView: UIView {
     var previewBuilder: (() -> AnyView)?
     var onMenuVisibleChanged: ((Bool) -> Void)?
     var reactionTarget: ChatReactionTarget?
+    var infoText: String?
     weak var overlayModel: BubbleMenuOverlayModel?
 
     private weak var bridge: BubbleContextMenuBridge?
@@ -180,6 +188,7 @@ struct BubbleMenuMarker: UIViewRepresentable {
     let previewBuilder: () -> AnyView
     var onMenuVisibleChanged: ((Bool) -> Void)? = nil
     var reactionTarget: ChatReactionTarget? = nil
+    var infoText: String? = nil
 
     func makeUIView(context: Context) -> BubbleMenuMarkerView {
         let v = BubbleMenuMarkerView()
@@ -201,6 +210,7 @@ struct BubbleMenuMarker: UIViewRepresentable {
         view.previewBuilder = previewBuilder
         view.onMenuVisibleChanged = onMenuVisibleChanged
         view.reactionTarget = reactionTarget
+        view.infoText = infoText
         view.overlayModel = context.environment.bubbleMenuOverlayModel
     }
 }
@@ -260,7 +270,8 @@ final class BubbleContextMenuBridge: NSObject {
             specs: marker.actions,
             isUser: marker.isUser,
             onRestore: { hide?(false) },
-            reactionTarget: marker.reactionTarget
+            reactionTarget: marker.reactionTarget,
+            infoText: marker.infoText
         )
         // window 层呈现：压住页级 chrome（顶部玻璃按钮），材质采样到真实内容层。
         // 手势回调必在主线程，assumeIsolated 只是给编译器背书

@@ -2857,6 +2857,16 @@ struct BubbleView: View {
     }
 
     private var menuReactionTarget: ChatReactionTarget? { isStreaming ? nil : ChatReactionTarget(node: node) }
+    /// 长按菜单底部：时间 · 字数 · token（10-07）
+    private var menuInfoText: String {
+        var parts: [String] = []
+        if let t = node.createTime { parts.append(t.formatted(.dateTime.month().day().hour().minute())) }
+        let chars = ContentCleaner.visibleText(node.content, isUser: isUser, cacheKey: node.id).count
+        parts.append("\(chars) 字")
+        if let o = node.usageOutputTokens, o > 0 { parts.append("\(o) tokens") }
+        if let c = node.usageCacheReadTokens, c > 0 { parts.append("缓存命中 \(c)") }
+        return parts.joined(separator: " · ")
+    }
     private var menuSpecsForWrapper: [MenuActionSpec] { useSystemBubbleMenu ? [] : nodeMenuSpecs() }
     private var wrapperCornerRadius: Double { chatBubbleMode ? bubbleModeCornerRadius : bubbleCornerRadius }
 
@@ -2887,7 +2897,7 @@ struct BubbleView: View {
             // Bubble（[B·砖3] iOS 包 BubbleMenuLiftWrapper：长按走自定义浮层，不用系统 contextMenu——
             // 反转列表下系统 lift 快照会颠倒（七月三雷之二）；浮层零件 592074d4 早已进仓，这里接线）
             BubbleMenuLiftWrapper(isUser: isUser, cornerRadius: wrapperCornerRadius, actions: menuSpecsForWrapper,
-                                  reactionTarget: menuReactionTarget,
+                                  reactionTarget: menuReactionTarget, infoText: menuInfoText,
                                   // round 11：浮层预览换 UITextView 可选字副本（MarkdownUI 不支持 textSelection）
                                   previewContent: {
                                       let raw = ContentCleaner.clean(node.content, cacheKey: node.id)
