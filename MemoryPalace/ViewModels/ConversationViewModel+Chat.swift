@@ -1630,18 +1630,40 @@ extension ConversationViewModel {
         }
 
         // Create new user node as sibling branch
+        // 10-07 编辑改进（粟粟同款）：保留原来的图片/文件块和引用，只换文字
+        let quotePrefix: String? = {
+            var c = originalNode.content
+            if c.hasPrefix("[回应]"), let r = c.range(of: "[/回应]") { c = String(c[r.upperBound...]); if c.hasPrefix("\n") { c.removeFirst() } }
+            guard c.hasPrefix("[引用]"), let r = c.range(of: "[/引用]") else { return nil }
+            return String(c[..<r.upperBound])
+        }()
+        let textWithQuote = quotePrefix.map { $0 + "\n" + newText } ?? newText
+        var newContent = textWithQuote
+        var newType = "text"
+        if originalNode.contentType == "multimodal_text",
+           let d = originalNode.content.data(using: .utf8),
+           let blocks = try? JSONSerialization.jsonObject(with: d) as? [[String: Any]] {
+            let kept = blocks.filter { ($0["type"] as? String) != "text" }
+            if !kept.isEmpty,
+               let out = try? JSONSerialization.data(withJSONObject: kept + [["type": "text", "text": textWithQuote]]),
+               let str = String(data: out, encoding: .utf8) {
+                newContent = str
+                newType = "multimodal_text"
+            }
+        }
         let newUserId = UUID().uuidString
         let newUserNode = MessageNode(
             id: newUserId,
             role: "user",
-            content: newText,
-            contentType: "text",
+            content: newContent,
+            contentType: newType,
             createTime: Date(),
             parentId: grandparentId,
             childrenIds: [],
             conversationId: conversation.id,
             profileId: conversation.profileId
         )
+        if let segs = originalNode.segments, !segs.isEmpty { newUserNode.setSegments(segs) }
         context.insert(newUserNode)
 
         if let grandparent = nodeMap[grandparentId] {

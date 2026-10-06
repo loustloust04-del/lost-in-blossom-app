@@ -915,6 +915,11 @@ struct CardFlowView: View {
             }
             .animation(.easeInOut(duration: 0.25), value: showStickerPanel)
             .animation(.easeInOut(duration: 0.25), value: stickerVM.isEditingStickers)
+            .onReceive(NotificationCenter.default.publisher(for: .submitEditMessage)) { n in
+                guard let id = n.userInfo?["nodeId"] as? String, let t = n.userInfo?["text"] as? String,
+                      let node = viewModel.nodeMap[id] else { return }
+                makeEditAction(for: node)?(t)
+            }
             .onReceive(NotificationCenter.default.publisher(for: .startMultiSelect)) { n in
                 if let id = n.userInfo?["nodeId"] as? String { viewModel.multiSelect = [id] }
             }
@@ -1580,6 +1585,8 @@ private struct InputFieldContainer: View {
     var onSendVoice: ((URL, Double) -> Void)? = nil
     @ObservedObject private var recorder = VoiceRecorder.shared
     @State private var quoteDraft = QuoteDraft.shared
+    /// 编辑态（10-07）：正在改哪条
+    @State private var editingMessage: (nodeId: String, original: String)? = nil
     @State private var voiceStarting = false
     @State private var voiceCancelArmed = false
     /// 上滑锁定（10-05 Telegram / 粟粟式）：锁住后可以松手继续说，点「发送」才发
@@ -1681,10 +1688,32 @@ private struct InputFieldContainer: View {
                 .onReceive(NotificationCenter.default.publisher(for: .composerInsert)) { n in
                     if let t = n.userInfo?["text"] as? String { insertFromCanvas(t) }
                 }
+                .onReceive(NotificationCenter.default.publisher(for: .startEditMessage)) { n in
+                    guard let id = n.userInfo?["nodeId"] as? String, let t = n.userInfo?["text"] as? String else { return }
+                    editingMessage = (id, t)
+                    text = t
+                    isFocused = true
+                }
                 .onReceive(NotificationCenter.default.publisher(for: .composerSendNow)) { n in
                     // 卡片作答：当作她的一条消息直接发（不动她输入框里正在打的字）
                     if let t = n.userInfo?["text"] as? String { _ = onSend(t) }
                 }
+            if let e = editingMessage {
+                HStack(spacing: 8) {
+                    RoundedRectangle(cornerRadius: 1.5).fill(Theme.branchIndicator).frame(width: 3, height: 28)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("编辑消息").font(.system(size: 11, weight: .medium)).foregroundColor(Theme.branchIndicator)
+                        Text(e.original).font(.system(size: 12)).foregroundColor(Theme.textMuted).lineLimit(1)
+                    }
+                    Spacer()
+                    Button { editingMessage = nil; text = "" } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 16)).foregroundColor(Theme.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+            }
             if let q = quoteDraft.pending {
                 HStack(spacing: 8) {
                     RoundedRectangle(cornerRadius: 1.5).fill(Theme.branchIndicator).frame(width: 3, height: 28)
@@ -2117,6 +2146,16 @@ private struct InputFieldContainer: View {
         if isStreaming { onCancelStream(); return }
         HapticService.shared.sendMessage()
         let sent = text
+        if let e = editingMessage {
+            let t = sent.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !t.isEmpty else { return }
+            NotificationCenter.default.post(name: .submitEditMessage, object: nil, userInfo: ["nodeId": e.nodeId, "text": t])
+            editingMessage = nil
+            Self.lastSent = (sent, Date())
+            text = ""
+            onDraftChange?("")
+            return
+        }
         if onSend(sent) {
             // 10-05 兔兔「消息发出去了，字还留在输入框里」三个来源一起堵：
             // ① 草稿每键落盘，发送后输入条被重建 → onAppear 拿旧草稿又填回来 → 发送时立刻把草稿也清掉
@@ -2727,8 +2766,15 @@ struct BubbleView: View {
         var specs: [MenuActionSpec] = []
         if isUser, onEdit != nil {
             specs.append(MenuActionSpec(title: "编辑", systemImage: "pencil", dividerAfter: true) {
-                editText = node.content
-                isEditing = true
+                // 10-07：编辑挪到输入框里（粟粟同款）——气泡里那个小框装不下长文，还把引用/图片标记原样露出来
+                let visible: String = {
+                    if node.contentType == "multimodal_text" { return MultimodalUserBubble.parse(node.content).text }
+                    return node.content
+                }()
+                var clean = ContentCleaner.clean(visible)
+                if clean.hasPrefix("[引用]"), let r = clean.range(of: "[/引用]") { clean = String(clean[r.upperBound...]).trimmingCharacters(in: .newlines) }
+                NotificationCenter.default.post(name: .startEditMessage, object: nil,
+                                                userInfo: ["nodeId": node.id, "text": clean])
             })
         }
         if !isUser, let onRegenerate, !isStreaming {
