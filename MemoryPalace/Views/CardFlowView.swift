@@ -1576,6 +1576,8 @@ private struct InputFieldContainer: View {
     /// 从来没量过高度，fieldHeight 恒 0，按钮永远不出；而且旧版 15pt × 5 行封顶约 102pt，
     /// 就算量了也过不了 110。两边各按各的行高定阈值：细版 110，旧版 92。
     private var inputAtMaxHeight: Bool { fieldHeight >= (slimInputBar ? 110 : 92) }
+    /// 放大钮（10-07 对齐粟粟）：一换行 / 长到两行就出现，不用等长满
+    private var showExpandButton: Bool { text.contains("\n") || fieldHeight > 50 }
     /// 键盘是否已开始升起。驱动源用 keyboardWillShow 而非 isFocused——
     /// 粟粟 2026-08-16 真机终验记过这个坑：isFocused 驱动会让「输入框先闪下 10pt、
     /// 模型选择器异位、再上滑」的起步预抖。willShow 与键盘同一时刻，混不进可感范围。
@@ -1888,7 +1890,7 @@ private struct InputFieldContainer: View {
                     .padding(.top, 10)
                     .padding(.bottom, 2)
                     // 到顶时右上角浮着展开按钮，给首行末尾让出位置（同细版）
-                    .padding(.trailing, inputAtMaxHeight ? 26 : 0)
+                    .padding(.trailing, showExpandButton ? 26 : 0)
                     .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { h in
                         fieldHeight = h
                     }
@@ -1945,7 +1947,7 @@ private struct InputFieldContainer: View {
                     .padding(.leading, 6)
                     .padding(.vertical, 10)
                     // 到顶时右上角浮着展开按钮，给首行末尾让出位置，否则压字
-                    .padding(.trailing, inputAtMaxHeight ? 26 : 0)
+                    .padding(.trailing, showExpandButton ? 26 : 0)
                     .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { h in
                         fieldHeight = h
                     }
@@ -2026,8 +2028,8 @@ private struct InputFieldContainer: View {
         // 只在输入框已长到头时出现：单行时框才 44pt 高，「右上角」就是右边、会撞发送键；
         // 而且没长满之前本来也看得全，不需要展开。
         .overlay(alignment: .topTrailing) {
-            if inputAtMaxHeight {
-                Button { expandedInput = true } label: {
+            if showExpandButton {
+                Button { isFocused = false; expandedInput = true } label: {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(Theme.textMuted.opacity(0.55))
@@ -2040,6 +2042,8 @@ private struct InputFieldContainer: View {
                 .transition(.opacity)
             }
         }
+        .animation(.easeOut(duration: 0.2), value: fieldHeight)
+        .animation(.easeOut(duration: 0.15), value: showExpandButton)
         .contentShape(RoundedRectangle(cornerRadius: 20))
         .onTapGesture { isFocused = true }
         )
