@@ -134,35 +134,34 @@ extension BaseChatProvider: URLSessionDataDelegate {
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            let wasStreaming = self.isStreaming
-            self.isStreaming = false
-            self.urlSession = nil
+        DispatchQueue.main.async { [self] in
+            let wasStreaming = isStreaming
+            isStreaming = false
+            urlSession = nil
 
             if let error = error as? NSError, error.code != NSURLErrorCancelled {
                 let msg = error.localizedDescription
                 self.error = msg
-                self.onError?(msg)
+                onError?(msg)
                 return
             }
 
-            if self.receivedDone { return }
+            if receivedDone { return }
 
-            if self.httpStatusCode != 0 && self.httpStatusCode != 200 {
-                let msg = self.handleErrorBody()
+            if httpStatusCode != 0 && httpStatusCode != 200 {
+                let msg = handleErrorBody()
                 self.error = msg
-                self.onError?(msg)
+                onError?(msg)
                 return
             }
 
             if wasStreaming {
-                if self.streamingContent.isEmpty {
+                if streamingContent.isEmpty {
                     let msg = "未收到回复"
                     self.error = msg
-                    self.onError?(msg)
+                    onError?(msg)
                 } else {
-                    self.onComplete?(self.streamingContent, self.finalUsage)
+                    onComplete?(streamingContent, finalUsage)
                 }
             }
         }
