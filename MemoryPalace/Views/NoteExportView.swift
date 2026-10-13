@@ -8,10 +8,11 @@ import SwiftUI
 struct NoteExportView: View {
     let content: String
     let style: String
+    var font: String? = nil
 
     var body: some View {
         Text(content)
-            .font(.system(size: 24))
+            .font(NoteStickerFont.font(font, size: 24))
             .foregroundColor(textColor)
             .padding(20)
             .frame(minWidth: 160, maxWidth: 400, minHeight: 80)

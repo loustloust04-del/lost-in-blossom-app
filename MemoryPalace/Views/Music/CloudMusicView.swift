@@ -111,16 +111,10 @@ struct CloudMusicView: View {
                 ForEach(songs) { s in
                     Button { playRemote(s, in: songs) } label: {
                         HStack(spacing: 10) {
-                            if loadingSongId == s.id {
-                                ProgressView().scaleEffect(0.6).frame(width: 18)
-                            } else {
-                                Image(systemName: player.currentSong?.title == s.title
-                                      ? (player.isPlaying ? "speaker.wave.2.fill" : "pause.fill") : "music.note")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(player.currentSong?.title == s.title
-                                                     ? ConsoleView.greenDeep : Theme.textMuted)
-                                    .frame(width: 18)
-                            }
+                            MusicArtwork(url: s.cover, size: 44)
+                                .overlay {
+                                    if loadingSongId == s.id { ProgressView().tint(ConsoleView.greenDeep) }
+                                }
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(s.title).font(.system(size: Theme.F.body))
                                     .foregroundColor(Theme.textPrimary).lineLimit(1)
@@ -128,6 +122,11 @@ struct CloudMusicView: View {
                                     .foregroundColor(Theme.textMuted).lineLimit(1)
                             }
                             Spacer()
+                            if player.currentSong?.remoteId == s.id {
+                                Image(systemName: player.isPlaying ? "speaker.wave.2.fill" : "pause.fill")
+                                    .foregroundStyle(ConsoleView.greenDeep)
+                                    .accessibilityLabel("当前歌曲")
+                            }
                         }
                     }
                     .buttonStyle(.plain)
@@ -173,6 +172,7 @@ struct CloudMusicView: View {
             let song = Song(profileId: profileId, title: r.title, artist: r.artist, album: r.album,
                             source: url, isRemote: true, durationSec: Double(r.duration), lyrics: d.lyric)
             song.remoteId = r.id
+            song.artworkURL = r.cover
             context.insert(song)
             try? context.save()
             if let remote = URL(string: url) { MusicCache.store(songId: r.id, from: remote) }
@@ -191,6 +191,7 @@ struct CloudMusicView: View {
             let song = Song(profileId: profileId, title: r.title, artist: r.artist, album: r.album,
                             source: url, isRemote: true, durationSec: Double(r.duration), lyrics: d.lyric)
             song.remoteId = r.id
+            song.artworkURL = r.cover
             context.insert(song)
             try? context.save()
             // 边听边存，下次就是本地文件
