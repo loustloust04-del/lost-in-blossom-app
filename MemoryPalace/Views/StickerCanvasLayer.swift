@@ -99,10 +99,12 @@ struct StickerCanvasLayer: View {
                 NoteStickerEditor(
                     initialText: sticker.noteContent ?? "",
                     initialStyle: NoteStyle(rawValue: sticker.noteStyle ?? "yellow_square") ?? .yellowSquare,
+                    initialFont: sticker.noteFont ?? "system",
                     isEditMode: true
-                ) { newText, newStyle in
+                ) { newText, newStyle, newFont in
                     sticker.noteContent = newText
                     sticker.noteStyle = newStyle.rawValue
+                    sticker.noteFont = newFont
                     stickerVM.persist(context: modelContext)
                     stickerVM.editingNoteStickerId = nil
                 }
@@ -193,7 +195,7 @@ struct StickerCanvasLayer: View {
             }
             .disabled(sticker.isLocked)
             Button {
-                stickerVM.shareNoteAsPNG(content: sticker.noteContent ?? "", style: sticker.noteStyle ?? "yellow_square")
+                stickerVM.shareNoteAsPNG(content: sticker.noteContent ?? "", style: sticker.noteStyle ?? "yellow_square", font: sticker.noteFont)
             } label: {
                 Label("导出为图片", systemImage: "square.and.arrow.up")
             }
