@@ -13,6 +13,8 @@ final class Song {
     var title: String = ""
     var artist: String = ""
     var album: String = ""
+    /// 可选封面；旧歌曲与本地音频使用唱片占位图。
+    var artworkURL: String?
     /// 文件库相对路径（本地文件）；远端歌这里存的是**上次的直链**，仅作兜底
     var source: String = ""
     var isRemote: Bool = false
