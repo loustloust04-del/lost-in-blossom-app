@@ -321,10 +321,10 @@ private struct BubbleMenuOverlayContent: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 10)
             HStack(spacing: 14) {
-                Image(systemName: "lightbulb")
+                Image(systemName: session.infoText == nil ? "lightbulb" : "clock")
                     .font(.system(size: 15))
                     .frame(width: 24)
-                Text("按住文字再拖动光标，可以选中一段复制或引用。")
+                Text(session.infoText ?? "按住文字再拖动光标，可以选中一段复制或引用。")
                     .font(.system(size: 12))
                     .lineSpacing(2)
                 Spacer(minLength: 8)

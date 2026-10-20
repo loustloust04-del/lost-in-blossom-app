@@ -94,7 +94,7 @@ struct StickerView: View {
     private var noteStickerContent: some View {
         let style = sticker.noteStyle ?? "yellow_square"
         return Text(sticker.noteContent ?? "")
-            .font(.system(size: 12))
+            .font(NoteStickerFont.font(sticker.noteFont, size: 12))
             .foregroundColor(noteTextColor(style))
             .padding(10)
             .frame(minWidth: 80, maxWidth: 160, minHeight: 40)

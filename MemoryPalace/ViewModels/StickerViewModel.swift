@@ -266,8 +266,8 @@ final class StickerViewModel {
     // MARK: - Create Note Asset
 
     /// 新建便签 → 存入贴纸库
-    func createNoteAsset(content: String, style: String, profileId: String, context: ModelContext) {
-        let asset = StickerAsset(noteContent: content, noteStyle: style, profileId: profileId)
+    func createNoteAsset(content: String, style: String, font: String? = nil, profileId: String, context: ModelContext) {
+        let asset = StickerAsset(noteContent: content, noteStyle: style, noteFont: font, profileId: profileId)
         context.insert(asset)
         stickerAssets.insert(asset, at: 0)
         try? context.save()
@@ -305,6 +305,7 @@ final class StickerViewModel {
     func placeNote(
         content: String,
         style: String,
+        font: String? = nil,
         conversationId: String,
         position: CGPoint,
         nearestMessageId: String?,
@@ -320,6 +321,7 @@ final class StickerViewModel {
             zIndex: maxZ + 1,
             noteContent: content,
             noteStyle: style,
+            noteFont: font,
             profileId: profileId
         )
         context.insert(sticker)
@@ -427,6 +429,7 @@ final class StickerViewModel {
             stickerAssetId: sticker.stickerAssetId,
             noteContent: sticker.noteContent,
             noteStyle: sticker.noteStyle,
+            noteFont: sticker.noteFont,
             scale: sticker.scale,
             rotation: sticker.rotation
         )
@@ -446,6 +449,7 @@ final class StickerViewModel {
             zIndex: maxZ + 1,
             noteContent: snap.noteContent,
             noteStyle: snap.noteStyle,
+            noteFont: snap.noteFont,
             profileId: profileId
         )
         context.insert(sticker)
@@ -543,8 +547,8 @@ final class StickerViewModel {
 
     /// 渲染便签为 PNG（不带画布上的 scale/rotation，原始尺寸 3x 高清）
     @MainActor
-    func exportNoteAsPNG(content: String, style: String) -> Data? {
-        let view = NoteExportView(content: content, style: style)
+    func exportNoteAsPNG(content: String, style: String, font: String? = nil) -> Data? {
+        let view = NoteExportView(content: content, style: style, font: font)
         let renderer = ImageRenderer(content: view)
         renderer.scale = 3.0
         guard let cgImage = renderer.cgImage else { return nil }
@@ -555,8 +559,8 @@ final class StickerViewModel {
 
     /// iOS: 直接弹 UIActivityViewController（UIKit 回调触发 SwiftUI sheet 不可靠）
     @MainActor
-    func shareNoteAsPNG(content: String, style: String) {
-        guard let data = exportNoteAsPNG(content: content, style: style),
+    func shareNoteAsPNG(content: String, style: String, font: String? = nil) {
+        guard let data = exportNoteAsPNG(content: content, style: style, font: font),
               let image = UIImage(data: data) else { return }
         let vc = UIActivityViewController(activityItems: [image], applicationActivities: nil)
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
@@ -587,6 +591,7 @@ struct StickerSnapshot {
     let stickerAssetId: UUID?
     let noteContent: String?
     let noteStyle: String?
+    let noteFont: String?
     let scale: Double
     let rotation: Double
 }
