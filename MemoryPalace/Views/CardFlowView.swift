@@ -2528,8 +2528,8 @@ struct BubbleView: View {
                             }
                             .font(.system(size: 13))
                             .foregroundColor(Color(red: 155/255.0, green: 142/255.0, blue: 126/255.0))
-                            .frame(minHeight: 44)
-                            .contentShape(Rectangle())
+                            // Enlarge only the hit shape; keep the original header height and position.
+                            .contentShape(.interaction, Rectangle().inset(by: -12))
                         }
                         .buttonStyle(.plain)
                         // 弹窗模式（thinkingSheetMode 开）：点标题弹全屏 sheet，复用 ThinkingPanelView
@@ -2548,28 +2548,12 @@ struct BubbleView: View {
                                         .frame(width: 2)
 
                                     VStack(alignment: .leading, spacing: 4) {
-                                        let display = thinkingShowFull ? thinkingText : String(thinkingText.prefix(300))
-                                        Text(display)
+                                        Text(thinkingText)
                                             .font(.system(size: 12))
                                             .foregroundColor(Theme.textMuted)
                                             .textSelection(.enabled)
                                             .frame(maxWidth: .infinity, alignment: .leading)
-
-                                        // 超过 300 字 → 渐变淡出 + Show more / Show less
-                                        if thinkingText.count > 300 {
-                                            Button {
-                                                withAnimation(.easeInOut(duration: 0.15)) {
-                                                    thinkingShowFull.toggle()
-                                                }
-                                            } label: {
-                                                Text(thinkingShowFull ? "收起全文" : "展开全文")
-                                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                                    .contentShape(Rectangle())
-                                            }
-                                            .font(.system(size: 11))
-                                            .foregroundColor(Theme.branchIndicator)
-                                            .buttonStyle(.plain)
-                                        }
+                                            .fixedSize(horizontal: false, vertical: true)
 
                                         // Done 标记（非流式时）
                                         if !isThinking {
@@ -2630,7 +2614,6 @@ struct BubbleView: View {
     @State private var showBranchPicker = false
     @State private var showFolderPicker = false
     @State private var thinkingExpanded = false
-    @State private var thinkingShowFull = false  // "Show more" 控制
     @AppStorage("thinkingSheetMode") private var thinkingSheetMode = false  // 开=弹全屏 sheet，关=原地折叠
     @State private var showThinkingSheet = false
     @State private var showArtifactCanvas = false

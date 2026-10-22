@@ -32,8 +32,8 @@ struct ThinkingDisclosure: View {
                     Spacer(minLength: 0)
                 }
                 .foregroundColor(Theme.textMuted.opacity(0.7))
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
+                // Hit testing must not add visible space above or below the header.
+                .contentShape(.interaction, Rectangle().inset(by: -12))
             }
             .buttonStyle(.plain)
 
