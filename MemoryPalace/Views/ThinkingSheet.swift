@@ -32,6 +32,7 @@ struct ThinkingDisclosure: View {
                     Spacer(minLength: 0)
                 }
                 .foregroundColor(Theme.textMuted.opacity(0.7))
+                .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

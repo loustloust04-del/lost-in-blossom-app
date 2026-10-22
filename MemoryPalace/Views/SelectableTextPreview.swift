@@ -25,7 +25,11 @@ struct SelectableTextPreview: UIViewRepresentable {
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
-        tv.attributedText = Self.render(text, size: fontSize, color: textColor)
+        let rendered = Self.render(text, size: fontSize, color: textColor)
+        // Geometry updates must not reset an active text selection.
+        if tv.attributedText?.isEqual(to: rendered) != true {
+            tv.attributedText = rendered
+        }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView tv: UITextView, context: Context) -> CGSize? {

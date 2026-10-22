@@ -19,7 +19,7 @@ private struct TextSelectItem: Identifiable {
 /// 「proxy.scrollTo 对 LazyVStack 远端目标按估算高度跳」`0942c8a2`）。
 /// 列表方向不变、气泡不翻——07-02 反转列表三连炸的雷一个都不碰。
 // ── [B 计划·反转列表] ──────────────────────────────────────────────────────
-// ScrollView 整体翻转（rotation π + scaleX −1，走 CALayer transform），每个 cell 再翻回正，
+// ScrollView 整体上下翻转，每个 cell 再翻回正；使用固定 scaleY，避免新增文字层插值 rotation。
 // ForEach 吃 reversed。于是 offset 0 = 最新消息：进对话不用找、新消息插在物理顶自动出现、
 // 在底吐字最后一行天然钉底。学 Stream Chat SwiftUI / 粟粟 5ccfb2b1。
 // 七月回滚三雷的今日拆法：编辑框已是纯 SwiftUI TextField；WebView 气泡已原生化（砖 1）；
@@ -27,8 +27,7 @@ private struct TextSelectItem: Identifiable {
 struct FlippedUpsideDown: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .rotationEffect(.radians(.pi))
-            .scaleEffect(x: -1, y: 1, anchor: .center)
+            .scaleEffect(x: 1, y: -1, anchor: .center)
     }
 }
 extension View {
@@ -113,6 +112,19 @@ final class ChatScrollHost {
 
     /// [反转列表] 视觉底 = 物理顶 = offset 原点（−顶 inset）。不再和 contentSize 打交道。
     /// 同一位置不重写（避免和手指/惯性打架）；手指按着/拖着时不写，不抢她的手。
+    /// 回底钮：滑回去。很远时先瞬移到离底 1.2 屏，再滑最后这段（Telegram 做法——
+    /// 长距离动画会让 LazyVStack 把中间几百条一路挂一遍，反而卡）
+    func animateToBottom() {
+        guard let sv = scrollView else { return }
+        let target = -sv.adjustedContentInset.top
+        let dist = sv.contentOffset.y - target
+        guard dist > 1 else { return }
+        if dist > sv.bounds.height * 2 {
+            sv.setContentOffset(CGPoint(x: sv.contentOffset.x, y: target + sv.bounds.height * 1.2), animated: false)
+        }
+        sv.setContentOffset(CGPoint(x: sv.contentOffset.x, y: target), animated: true)
+    }
+
     func pinToBottom() {
         guard let sv = scrollView, !sv.isTracking, !sv.isDragging else { return }
         let y = -sv.adjustedContentInset.top
@@ -363,6 +375,142 @@ struct CardFlowView: View {
         }
     }
 
+    /// 列表里的一行（10-05 从 body 里拆出来：body 太大，编��器类型检查超时）
+    @ViewBuilder private func messageRow(_ node: MessageNode) -> some View {
+                    multiSelectWrap(node, makeBubbleView(for: node))
+                        .flippedUpsideDown()   // cell 翻回正
+                        .id(node.id)
+                        // 10-05 往上翻不丝滑：离窗口最老那头还剩 6 条就提前扩一批（预取），
+                        // 不等滑到底才扩——扩的那一下不再落在手指底下
+                        .onAppear { prefetchOlderIfNeeded(node) }
+                        // 新消息插在物理顶：从物理顶滑入 = 视觉底滑入
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        // 贴纸定位追踪：每条气泡记录 midY。旧版用 .task(id: midY)——
+                        // 滚动时每帧每条可见气泡 cancel+新建一个 async Task，是滚动卡顿
+                        // 大户。改 iOS 18 原生 onGeometryChange：同步闭包、值变才回调、
+                        // 零 Task 分配。bubblePositions 是 @ObservationIgnored，写它不触发重绘。
+                        .background(
+                            Color.clear.onGeometryChange(for: CGFloat.self) { proxy in
+                                proxy.frame(in: .named("scrollContent")).midY
+                            } action: { midY in
+                                stickerVM.bubblePositions[node.id] = midY
+                            }
+                        )
+    }
+
+    /// 多选态：左边一个勾选圈，整行点了切换；不在多选态原样
+    @ViewBuilder private func multiSelectWrap<V: View>(_ node: MessageNode, _ bubble: V) -> some View {
+        if let sel = viewModel.multiSelect {
+            let on = sel.contains(node.id)
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 22))
+                    .foregroundColor(on ? Theme.branchIndicator : Theme.textMuted.opacity(0.5))
+                    .padding(.leading, 10)
+                bubble.allowsHitTesting(false)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                var s = sel
+                if on { s.remove(node.id) } else { s.insert(node.id) }
+                viewModel.multiSelect = s
+                UISelectionFeedbackGenerator().selectionChanged()
+            }
+        } else {
+            bubble
+        }
+    }
+
+    /// 多选底栏：复制 / 删除 / 取消
+    private var multiSelectBar: some View {
+        let sel = viewModel.multiSelect ?? []
+        let nodes = viewModel.currentPath.filter { sel.contains($0.id) }
+        return HStack(spacing: 18) {
+            Text("已选 \(nodes.count) 条").font(.system(size: 13, weight: .medium)).foregroundColor(Theme.textPrimary)
+            Spacer()
+            Button {
+                let text = nodes.map { n in
+                    (n.role == "assistant" ? "\(profileManager?.currentProfile.assistantName ?? "Caelum")：" : "我：")
+                    + ContentCleaner.visibleText(n.content, isUser: n.role == "user", cacheKey: n.id)
+                }.joined(separator: "\n\n")
+                UIPasteboard.general.string = text
+                HapticService.shared.copyText()
+                ToastCenter.shared.show("复制了 \(nodes.count) 条")
+                viewModel.multiSelect = nil
+            } label: { Label("复制", systemImage: "doc.on.doc").font(.system(size: 14)) }
+            .disabled(nodes.isEmpty)
+            Button(role: .destructive) {
+                nodes.forEach { viewModel.softDelete($0) }
+                ToastCenter.shared.show("删了 \(nodes.count) 条（回收站能找回）")
+                viewModel.multiSelect = nil
+            } label: { Label("删除", systemImage: "trash").font(.system(size: 14)) }
+            .disabled(nodes.isEmpty)
+            Button("取消") { viewModel.multiSelect = nil }.font(.system(size: 14))
+        }
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .background(.ultraThinMaterial)
+    }
+
+    /// 往上翻预取：离窗口最老那头还剩 6 条就提前扩一批
+    private func prefetchOlderIfNeeded(_ node: MessageNode) {
+        guard viewModel.hasMoreAbove,
+              let i = viewModel.visiblePath.firstIndex(where: { $0.id == node.id }), i <= 6 else { return }
+        withAnimation(.none) { viewModel.expandRenderWindow() }
+        prewarmMarkdown(before: viewModel.renderStart)
+    }
+
+    /// 回底钮（10-07 兔兔「按钮彻底失效了」：上一版纯靠 setContentOffset 动画，被「读历史时补偿位移」
+    /// 那套 KVO 半路掐断，等于没动。照粟粟改：SwiftUI 动画 scrollTo 哨兵；很远时先瞬移到离底 1.2 屏；
+    /// 动画结束后再走一次老的强制钉底（以前一直好用的那条），保证最后一定落到底）
+    private func scrollToBottomTapped(proxy: ScrollViewProxy) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        if viewModel.hasMoreBelow {
+            withAnimation(.none) { viewModel.resetRenderWindow() }
+            scrollToLastMessage(proxy: proxy, force: true)
+            return
+        }
+        if let sv = scrollHost.scrollView {
+            let bottomY = -sv.adjustedContentInset.top
+            if sv.contentOffset.y - bottomY > sv.bounds.height * 2 {
+                sv.setContentOffset(CGPoint(x: sv.contentOffset.x, y: bottomY + sv.bounds.height * 1.2), animated: false)
+            }
+        }
+        withAnimation(.easeOut(duration: 0.3)) { proxy.scrollTo("__bottom_sentinel__", anchor: .top) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { scrollToLastMessage(proxy: proxy, force: true) }
+    }
+
+
+    /// 不画东西，只挂通知监听（编辑提交 / 多选 / ⋯ 菜单「在对话里找」）
+    private var notificationListeners: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onReceive(NotificationCenter.default.publisher(for: .submitEditMessage)) { n in
+                guard let id = n.userInfo?["nodeId"] as? String, let t = n.userInfo?["text"] as? String,
+                      let node = viewModel.nodeMap[id] else { return }
+                makeEditAction(for: node)?(t)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .startMultiSelect)) { n in
+                if let id = n.userInfo?["nodeId"] as? String { viewModel.multiSelect = [id] }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .toggleInConvSearch)) { _ in
+                showInConvSearch.toggle()
+                if showInConvSearch { inConvSearchFocused = true } else { viewModel.clearInConvSearch() }
+            }
+    }
+
+    /// 顶栏下：置顶条 + 正在放歌胶囊
+    private var topFloatingStack: some View {
+        VStack(spacing: 6) {
+            PinnedBar(pinned: viewModel.currentPath.filter { $0.isPinned && !$0.isTrashed },
+                      assistantName: profileManager?.currentProfile.assistantName ?? "Caelum") { n in
+                viewModel.scrollToNodeId = n.id
+            }
+            NowPlayingCapsule()
+        }
+        .padding(.top, (UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.safeAreaInsets.top ?? 59) + 62)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: MusicPlayer.shared.currentSong?.remoteId)
+    }
+
     var body: some View {
         if viewModel.isCurrentConvLoading {
             VStack {
@@ -435,22 +583,7 @@ struct CardFlowView: View {
                                     .flippedUpsideDown()
                                 }
                                 ForEach(viewModel.visiblePath.reversed(), id: \.id) { node in
-                                    makeBubbleView(for: node)
-                                        .flippedUpsideDown()   // cell 翻回正
-                                        .id(node.id)
-                                        // 新消息插在物理顶：从物理顶滑入 = 视觉底滑入
-                                        .transition(.opacity.combined(with: .move(edge: .top)))
-                                        // 贴纸定位追踪：每条气泡记录 midY。旧版用 .task(id: midY)——
-                                        // 滚动时每帧每条可见气泡 cancel+新建一个 async Task，是滚动卡顿
-                                        // 大户。改 iOS 18 原生 onGeometryChange：同步闭包、值变才回调、
-                                        // 零 Task 分配。bubblePositions 是 @ObservationIgnored，写它不触发重绘。
-                                        .background(
-                                            Color.clear.onGeometryChange(for: CGFloat.self) { proxy in
-                                                proxy.frame(in: .named("scrollContent")).midY
-                                            } action: { midY in
-                                                stickerVM.bubblePositions[node.id] = midY
-                                            }
-                                        )
+                                    messageRow(node)
                                 }
                                 // 只渲染尾部窗口，滑到（视觉）顶自动往前扩一段——物理末尾 = 视觉顶
                                 if viewModel.hasMoreAbove {
@@ -714,16 +847,14 @@ struct CardFlowView: View {
                     // barOverlap 那么多，内容滚过输入条的毛玻璃；最新一条靠 contentMargins 停在输入条上方。
                     .ignoresSafeArea(.container, edges: .top)
                     .padding(.bottom, -barOverlap)
+                    // 正在放歌：顶栏下面一颗小胶囊（10-05 音乐卡配套，切对话也在）
+                    .overlay(alignment: .top) { topFloatingStack }   // 置顶条 + 正在放歌胶囊（10-05）
                     .overlay(alignment: .bottomTrailing) {
                         // 回底按钮浮在列表上，不占 safe area（见上）
                         if !isAtBottom && !viewModel.currentPath.isEmpty {
                             ScrollToBottomButton(
                                 isVisible: true,
-                                action: {
-                                    // 定位过老消息时窗口没到最新：回底 = 先回到「最新 24 条」窗口
-                                    if viewModel.hasMoreBelow { withAnimation(.none) { viewModel.resetRenderWindow() } }
-                                    scrollToLastMessage(proxy: proxy, force: true)
-                                }
+                                action: { scrollToBottomTapped(proxy: proxy) }
                             )
                             .padding(.trailing, 16)
                             .padding(.bottom, 8)
@@ -739,6 +870,8 @@ struct CardFlowView: View {
                         } else if stickerVM.isEditingStickers {
                             // 编辑模式：工具栏在 overlay，这里只占位
                             Color.clear.frame(height: 60)
+                        } else if viewModel.multiSelect != nil {
+                            multiSelectBar
                         } else if let pm = providerManager {
                             VStack(spacing: 0) {
                                 // 回底按钮已挪到 ScrollView 的 overlay（B round 3）：它在 safeAreaInset 里会把
@@ -799,6 +932,7 @@ struct CardFlowView: View {
             }
             .animation(.easeInOut(duration: 0.25), value: showStickerPanel)
             .animation(.easeInOut(duration: 0.25), value: stickerVM.isEditingStickers)
+            .background { notificationListeners }   // 编辑提交 / 多选 / 在对话里找（10-07 拆出 body 减轻类型检查）
             .background {
                 // Hidden button for Cmd+F shortcut
                 Button("") {
@@ -988,7 +1122,7 @@ struct CardFlowView: View {
                 if let asset, asset.isNote {
                     stickerVM.placeNote(
                         content: asset.noteContent ?? "",
-                        style: asset.noteStyle ?? "yellow_square",
+                        style: asset.noteStyle ?? "yellow_square", font: asset.noteFont,
                         conversationId: convId,
                         position: location,
                         nearestMessageId: nearestId,
@@ -1036,61 +1170,155 @@ struct InConversationSearchBar: View {
     var focused: FocusState<Bool>.Binding
     var onDismiss: () -> Void
     @State private var keyword: String = ""
+    @State private var debounce: DispatchWorkItem? = nil
+    @State private var showList = false
+    @State private var showCalendar = false
+    @State private var day = Date()
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 12))
+                .font(.system(size: 13))
                 .foregroundColor(Theme.textMuted)
 
-            TextField("搜索当前对话...", text: $keyword)
+            TextField("在这段对话里找…（空格分开多个词）", text: $keyword)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13))
+                .font(.system(size: 14))
                 .focused(focused)
-                .onSubmit {
-                    viewModel.searchInConversation(keyword: keyword)
-                }
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .onSubmit { viewModel.searchInConversation(keyword: keyword); focused.wrappedValue = false }
                 .onChange(of: keyword) { _, newValue in
-                    if newValue.isEmpty {
-                        viewModel.clearInConvSearch()
-                    }
+                    // 打字即搜：停 0.25 秒再搜（拼音组字中不会每个字母都搜一遍）
+                    debounce?.cancel()
+                    if newValue.isEmpty { viewModel.clearInConvSearch(); return }
+                    let w = DispatchWorkItem { viewModel.searchInConversation(keyword: newValue) }
+                    debounce = w
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: w)
                 }
 
             if !viewModel.inConvMatches.isEmpty {
                 Text("\(viewModel.inConvMatchIndex + 1)/\(viewModel.inConvMatches.count)")
-                    .font(.caption2)
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(Theme.textMuted)
                     .monospacedDigit()
-
-                Button(action: { viewModel.navigateInConvMatch(direction: -1) }) {
-                    Image(systemName: "chevron.up")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Theme.branchIndicator)
+                // ↑ 更早 / ↓ 更新，合成一个竖胶囊（粟粟同款），按钮 36pt 好点
+                HStack(spacing: 0) {
+                    Button { viewModel.navigateInConvMatch(direction: 1) } label: {
+                        Image(systemName: "chevron.up").font(.system(size: 13, weight: .semibold)).frame(width: 34, height: 30)
+                    }
+                    Button { viewModel.navigateInConvMatch(direction: -1) } label: {
+                        Image(systemName: "chevron.down").font(.system(size: 13, weight: .semibold)).frame(width: 34, height: 30)
+                    }
                 }
                 .buttonStyle(.plain)
-
-                Button(action: { viewModel.navigateInConvMatch(direction: 1) }) {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Theme.branchIndicator)
+                .foregroundColor(Theme.branchIndicator)
+                .background(Capsule().fill(Theme.branchIndicator.opacity(0.1)))
+                Button { showList = true } label: {
+                    Image(systemName: "list.bullet").font(.system(size: 13, weight: .medium)).frame(width: 30, height: 30)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.plain).foregroundColor(Theme.textMuted)
             } else if !keyword.isEmpty && viewModel.inConvMatchIndex == -1 {
-                Text("无结果")
-                    .font(.caption2)
-                    .foregroundColor(Theme.textMuted)
+                Text("没找到").font(.system(size: 12)).foregroundColor(Theme.textMuted)
             }
+
+            Button { showCalendar = true } label: {
+                Image(systemName: "calendar").font(.system(size: 13, weight: .medium)).frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain).foregroundColor(Theme.textMuted)
 
             Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(Theme.textMuted)
+                Image(systemName: "xmark").font(.system(size: 12, weight: .medium)).frame(width: 28, height: 30)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plain).foregroundColor(Theme.textMuted)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
         .background(Theme.sidebarBg)
+        .sheet(isPresented: $showList) {
+            InConvMatchList(viewModel: viewModel, keyword: viewModel.inConvSearchKeyword) { id in
+                showList = false
+                viewModel.jumpToMatch(id)
+            }
+            .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $showCalendar) {
+            NavigationStack {
+                DatePicker("跳到哪天", selection: $day,
+                           in: (viewModel.currentPath.first?.createTime ?? .distantPast)...Date(),
+                           displayedComponents: .date)
+                    .datePickerStyle(.graphical)
+                    .padding()
+                    .navigationTitle("跳到某天")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("跳过去") { showCalendar = false; viewModel.jumpToDay(day) }
+                        }
+                        ToolbarItem(placement: .cancellationAction) { Button("取消") { showCalendar = false } }
+                    }
+            }
+            .presentationDetents([.medium, .large])
+        }
+    }
+}
+
+/// 列表模式：所有命中排成一列，片段里关键词高亮，点哪条跳哪条
+struct InConvMatchList: View {
+    var viewModel: ConversationViewModel
+    let keyword: String
+    let onPick: (String) -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(viewModel.inConvMatches, id: \.self) { id in
+                    if let n = viewModel.currentPath.first(where: { $0.id == id }) {
+                        Button { onPick(id) } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(n.role == "assistant" ? (n.senderName ?? "他") : "我")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundColor(n.role == "assistant" ? Theme.branchIndicator : Theme.textMuted)
+                                    Spacer()
+                                    Text((n.createTime ?? Date()).formatted(.dateTime.month().day().hour().minute()))
+                                        .font(.system(size: 11)).foregroundColor(Theme.textMuted)
+                                }
+                                Text(snippet(n)).font(.system(size: 14)).lineLimit(3)
+                            }
+                            .padding(.vertical, 2)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .navigationTitle("\(viewModel.inConvMatches.count) 处")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    /// 关键词前后各留一截，命中的词加底色
+    private func snippet(_ n: MessageNode) -> AttributedString {
+        let text = ContentCleaner.visibleText(n.content, isUser: n.role == "user", cacheKey: n.id)
+            .replacingOccurrences(of: "\n", with: " ")
+        let words = keyword.split(separator: " ").map(String.init).filter { !$0.isEmpty }
+        var start = text.startIndex
+        if let w = words.first, let r = text.range(of: w, options: [.caseInsensitive, .diacriticInsensitive]) {
+            start = text.index(r.lowerBound, offsetBy: -min(24, text.distance(from: text.startIndex, to: r.lowerBound)))
+        }
+        let piece = (start > text.startIndex ? "…" : "") + String(text[start...].prefix(140))
+        var a = AttributedString(piece)
+        a.foregroundColor = Theme.textPrimary
+        for w in words {
+            var searchFrom = a.startIndex
+            while let r = a[searchFrom...].range(of: w, options: [.caseInsensitive, .diacriticInsensitive]) {
+                a[r].backgroundColor = Theme.branchIndicator.opacity(0.25)
+                a[r].font = .system(size: 14, weight: .semibold)
+                searchFrom = r.upperBound
+            }
+        }
+        return a
     }
 }
 
@@ -1347,6 +1575,8 @@ private struct InputFieldContainer: View {
     /// 从来没量过高度，fieldHeight 恒 0，按钮永远不出；而且旧版 15pt × 5 行封顶约 102pt，
     /// 就算量了也过不了 110。两边各按各的行高定阈值：细版 110，旧版 92。
     private var inputAtMaxHeight: Bool { fieldHeight >= (slimInputBar ? 110 : 92) }
+    /// 放大钮（10-07 对齐粟粟）：一换行 / 长到两行就出现，不用等长满
+    private var showExpandButton: Bool { text.contains("\n") || fieldHeight > 50 }
     /// 键盘是否已开始升起。驱动源用 keyboardWillShow 而非 isFocused——
     /// 粟粟 2026-08-16 真机终验记过这个坑：isFocused 驱动会让「输入框先闪下 10pt、
     /// 模型选择器异位、再上滑」的起步预抖。willShow 与键盘同一时刻，混不进可感范围。
@@ -1363,8 +1593,13 @@ private struct InputFieldContainer: View {
     var onSendVoice: ((URL, Double) -> Void)? = nil
     @ObservedObject private var recorder = VoiceRecorder.shared
     @State private var quoteDraft = QuoteDraft.shared
+    /// 编辑态（10-07）：正在改哪条
+    @State private var editingMessage: (nodeId: String, original: String)? = nil
     @State private var voiceStarting = false
     @State private var voiceCancelArmed = false
+    /// 上滑锁定（10-05 Telegram / 粟粟式）：锁住后可以松手继续说，点「发送」才发
+    @State private var voiceLocked = false
+    @State private var voiceShake: CGFloat = 0
     let onCancelStream: () -> Void
     let onStickerTap: (() -> Void)?
     let onModelTap: () -> Void
@@ -1461,10 +1696,32 @@ private struct InputFieldContainer: View {
                 .onReceive(NotificationCenter.default.publisher(for: .composerInsert)) { n in
                     if let t = n.userInfo?["text"] as? String { insertFromCanvas(t) }
                 }
+                .onReceive(NotificationCenter.default.publisher(for: .startEditMessage)) { n in
+                    guard let id = n.userInfo?["nodeId"] as? String, let t = n.userInfo?["text"] as? String else { return }
+                    editingMessage = (id, t)
+                    text = t
+                    isFocused = true
+                }
                 .onReceive(NotificationCenter.default.publisher(for: .composerSendNow)) { n in
                     // 卡片作答：当作她的一条消息直接发（不动她输入框里正在打的字）
                     if let t = n.userInfo?["text"] as? String { _ = onSend(t) }
                 }
+            if let e = editingMessage {
+                HStack(spacing: 8) {
+                    RoundedRectangle(cornerRadius: 1.5).fill(Theme.branchIndicator).frame(width: 3, height: 28)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("编辑消息").font(.system(size: 11, weight: .medium)).foregroundColor(Theme.branchIndicator)
+                        Text(e.original).font(.system(size: 12)).foregroundColor(Theme.textMuted).lineLimit(1)
+                    }
+                    Spacer()
+                    Button { editingMessage = nil; text = "" } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 16)).foregroundColor(Theme.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+            }
             if let q = quoteDraft.pending {
                 HStack(spacing: 8) {
                     RoundedRectangle(cornerRadius: 1.5).fill(Theme.branchIndicator).frame(width: 3, height: 28)
@@ -1483,19 +1740,15 @@ private struct InputFieldContainer: View {
                 .transition(.opacity)
             }
             if recorder.isRecording {
-                HStack(spacing: 8) {
-                    Circle().fill(Theme.danger).frame(width: 8, height: 8)
-                        .opacity(0.4 + Double(recorder.level) * 0.6)
-                    Text(String(format: "%d:%02d", Int(recorder.elapsed) / 60, Int(recorder.elapsed) % 60))
-                        .font(.system(size: 13, weight: .medium).monospacedDigit())
-                        .foregroundColor(Theme.textPrimary)
-                    Text(voiceCancelArmed ? "松手取消" : "松手发送 · 上滑取消")
-                        .font(.system(size: 12))
-                        .foregroundColor(voiceCancelArmed ? Theme.danger : Theme.textMuted)
-                    Spacer()
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+                VoiceRecordingRow(
+                    levels: recorder.levels,
+                    elapsed: recorder.elapsed,
+                    cancelArmed: voiceCancelArmed,
+                    locked: voiceLocked,
+                    onCancel: { recorder.cancel(); voiceLocked = false; HapticService.shared.longPress() },
+                    onSend: { finishVoice() }
+                )
+                .modifier(ShakeEffect(animatableData: voiceShake))
                 .transition(.opacity)
             }
             // ── 多附件条（09-12）：缩略图 / 文件块横排，各自可删 ──────────────
@@ -1636,7 +1889,7 @@ private struct InputFieldContainer: View {
                     .padding(.top, 10)
                     .padding(.bottom, 2)
                     // 到顶时右上角浮着展开按钮，给首行末尾让出位置（同细版）
-                    .padding(.trailing, inputAtMaxHeight ? 26 : 0)
+                    .padding(.trailing, showExpandButton ? 26 : 0)
                     .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { h in
                         fieldHeight = h
                     }
@@ -1693,7 +1946,7 @@ private struct InputFieldContainer: View {
                     .padding(.leading, 6)
                     .padding(.vertical, 10)
                     // 到顶时右上角浮着展开按钮，给首行末尾让出位置，否则压字
-                    .padding(.trailing, inputAtMaxHeight ? 26 : 0)
+                    .padding(.trailing, showExpandButton ? 26 : 0)
                     .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { h in
                         fieldHeight = h
                     }
@@ -1739,16 +1992,20 @@ private struct InputFieldContainer: View {
                                     else if let e = recorder.lastError { ToastCenter.shared.show(e) }
                                 }
                             }
-                            voiceCancelArmed = g.translation.height < -60   // 上滑超过 60pt = 松手取消
+                            guard !voiceLocked else { return }
+                            // 10-05：左滑 80pt = 松手取消；上滑 70pt = 锁定（可以松手继续说）
+                            voiceCancelArmed = g.translation.width < -80
+                            if g.translation.height < -70 && !voiceCancelArmed && recorder.isRecording {
+                                voiceLocked = true
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            }
                         }
                         .onEnded { _ in
                             guard recorder.isRecording || voiceStarting else { return }
                             defer { voiceCancelArmed = false }
+                            if voiceLocked { return }                 // 锁着：松手不发，继续录
                             if voiceCancelArmed { recorder.cancel(); return }
-                            if let r = recorder.stop() {
-                                onSendVoice?(r.url, r.duration)
-                                HapticService.shared.sendMessage()
-                            }
+                            finishVoice()
                         }
                 )
                 // 44×44 是 iOS 标准最小点击区，也是整行高度的下限——
@@ -1770,8 +2027,8 @@ private struct InputFieldContainer: View {
         // 只在输入框已长到头时出现：单行时框才 44pt 高，「右上角」就是右边、会撞发送键；
         // 而且没长满之前本来也看得全，不需要展开。
         .overlay(alignment: .topTrailing) {
-            if inputAtMaxHeight {
-                Button { expandedInput = true } label: {
+            if showExpandButton {
+                Button { isFocused = false; expandedInput = true } label: {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(Theme.textMuted.opacity(0.55))
@@ -1784,6 +2041,8 @@ private struct InputFieldContainer: View {
                 .transition(.opacity)
             }
         }
+        .animation(.easeOut(duration: 0.2), value: fieldHeight)
+        .animation(.easeOut(duration: 0.15), value: showExpandButton)
         .contentShape(RoundedRectangle(cornerRadius: 20))
         .onTapGesture { isFocused = true }
         )
@@ -1858,11 +2117,25 @@ private struct InputFieldContainer: View {
         }
         // 切对话：换成新对话的草稿（旧对话的已实时落盘，无需 flush）
         .onChange(of: draftConversationId) { _, _ in
-            text = initialDraft
+            text = Self.isJustSent(initialDraft) ? "" : initialDraft
         }
-        // 冷启动 / view 重建：恢复当前对话的草稿
+        // 冷启动 / view 重建：恢复当前对话的草稿（刚发出去的那句不算草稿）
         .onAppear {
-            if text.isEmpty, !initialDraft.isEmpty { text = initialDraft }
+            if text.isEmpty, !initialDraft.isEmpty, !Self.isJustSent(initialDraft) { text = initialDraft }
+        }
+    }
+
+    /// 停止并发送；太短（<0.6s）抖一下提醒
+    private func finishVoice() {
+        let wasLocked = voiceLocked
+        voiceLocked = false
+        if let r = recorder.stop() {
+            onSendVoice?(r.url, r.duration)
+            HapticService.shared.sendMessage()
+        } else if !wasLocked || recorder.elapsed < 1 {
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            withAnimation(.linear(duration: 0.35)) { voiceShake += 1 }
+            ToastCenter.shared.show("太短啦，按住多说一会儿")
         }
     }
 
@@ -1872,10 +2145,41 @@ private struct InputFieldContainer: View {
         isFocused = true
     }
 
+    /// 刚发出去的那句（静态：输入条视图在发送那一刻可能被重建，@State 会丢）
+    static var lastSent: (text: String, at: Date)? = nil
+    private static func isJustSent(_ s: String) -> Bool {
+        guard let l = lastSent, !s.isEmpty else { return false }
+        return Date().timeIntervalSince(l.at) < 3 && (s == l.text || l.text.hasPrefix(s) || s.hasPrefix(l.text))
+    }
+
     private func triggerSend() {
         if isStreaming { onCancelStream(); return }
         HapticService.shared.sendMessage()
-        if onSend(text) { text = "" }
+        let sent = text
+        if let e = editingMessage {
+            let t = sent.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !t.isEmpty else { return }
+            NotificationCenter.default.post(name: .submitEditMessage, object: nil, userInfo: ["nodeId": e.nodeId, "text": t])
+            editingMessage = nil
+            Self.lastSent = (sent, Date())
+            text = ""
+            onDraftChange?("")
+            return
+        }
+        if onSend(sent) {
+            // 10-05 兔兔「消息发出去了，字还留在输入框里」三个来源一起堵：
+            // ① 草稿每键落盘，发送后输入条被重建 → onAppear 拿旧草稿又填回来 → 发送时立刻把草稿也清掉
+            // ② 中文输入法组字中点发送，清空后输入法把没上屏的那截再提交一次 → 稍后再看一眼，是那句就再清
+            // ③ 发第一句时新建了对话，draftConversationId 一变就把（旧的）初始草稿塞回来 → 认出是刚发的就不塞
+            Self.lastSent = (sent, Date())
+            text = ""
+            onDraftChange?("")
+            for d in [0.05, 0.2, 0.6] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + d) {
+                    if Self.isJustSent(text) { text = ""; onDraftChange?("") }
+                }
+            }
+        }
     }
 }
 
@@ -2224,6 +2528,7 @@ struct BubbleView: View {
                             }
                             .font(.system(size: 13))
                             .foregroundColor(Color(red: 155/255.0, green: 142/255.0, blue: 126/255.0))
+                            .frame(minHeight: 44)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -2252,10 +2557,14 @@ struct BubbleView: View {
 
                                         // 超过 300 字 → 渐变淡出 + Show more / Show less
                                         if thinkingText.count > 300 {
-                                            Button(thinkingShowFull ? "Show less" : "Show more") {
+                                            Button {
                                                 withAnimation(.easeInOut(duration: 0.15)) {
                                                     thinkingShowFull.toggle()
                                                 }
+                                            } label: {
+                                                Text(thinkingShowFull ? "收起全文" : "展开全文")
+                                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                                    .contentShape(Rectangle())
                                             }
                                             .font(.system(size: 11))
                                             .foregroundColor(Theme.branchIndicator)
@@ -2401,7 +2710,7 @@ struct BubbleView: View {
                 }
                 Divider()
                 Button(action: {
-                    UIPasteboard.general.string = ContentCleaner.clean(node.content, cacheKey: node.id)
+                    UIPasteboard.general.string = currentMenuText
                     // 2026-08-31：项目里早有 HapticService（含 copyText/deleteAction），
                     // 但气泡按钮一个都没接过——现成的轮子没用上。（自粟粟 07-11「气泡小按钮三连打磨」）
                     HapticService.shared.copyText()
@@ -2472,8 +2781,15 @@ struct BubbleView: View {
         var specs: [MenuActionSpec] = []
         if isUser, onEdit != nil {
             specs.append(MenuActionSpec(title: "编辑", systemImage: "pencil", dividerAfter: true) {
-                editText = node.content
-                isEditing = true
+                // 10-07：编辑挪到输入框里（粟粟同款）——气泡里那个小框装不下长文，还把引用/图片标记原样露出来
+                let visible: String = {
+                    if node.contentType == "multimodal_text" { return MultimodalUserBubble.parse(node.content).text }
+                    return node.content
+                }()
+                var clean = ContentCleaner.clean(visible)
+                if clean.hasPrefix("[引用]"), let r = clean.range(of: "[/引用]") { clean = String(clean[r.upperBound...]).trimmingCharacters(in: .newlines) }
+                NotificationCenter.default.post(name: .startEditMessage, object: nil,
+                                                userInfo: ["nodeId": node.id, "text": clean])
             })
         }
         if !isUser, let onRegenerate, !isStreaming {
@@ -2507,12 +2823,17 @@ struct BubbleView: View {
             HapticService.shared.longPress()
             onNotice?(willPin ? "已钉住" : "已取消钉住")
         })
+        specs.append(MenuActionSpec(title: "多选", systemImage: "checklist") {
+            // 气泡视图里没有 viewModel，发通知让聊天页进多选态
+            NotificationCenter.default.post(name: .startMultiSelect, object: nil, userInfo: ["nodeId": node.id])
+            HapticService.shared.longPress()
+        })
         specs.append(MenuActionSpec(title: "引用", systemImage: "arrowshape.turn.up.left") {
             QuoteDraft.shared.set(from: node, assistantName: UserDefaults.standard.string(forKey: "assistantName") ?? "Caelum")
             HapticService.shared.longPress()
         })
         specs.append(MenuActionSpec(title: "复制文本", systemImage: "doc.on.doc") {
-            UIPasteboard.general.string = ContentCleaner.clean(node.content, cacheKey: node.id)
+            UIPasteboard.general.string = currentMenuText
             HapticService.shared.copyText()
             onNotice?("已复制")
         })
@@ -2523,6 +2844,12 @@ struct BubbleView: View {
         })
         return specs
     }
+    /// Match the live bubble rather than the persisted placeholder during streaming.
+    private var currentMenuText: String {
+        let source = isStreaming && !streamingContentText.isEmpty ? streamingContentText : node.content
+        return ContentCleaner.visibleText(source, isUser: isUser, cacheKey: node.id)
+    }
+
     @State private var isSelectingText = false
     @State private var isEditing = false
     @State private var editText = ""
@@ -2670,6 +2997,16 @@ struct BubbleView: View {
     }
 
     private var menuReactionTarget: ChatReactionTarget? { isStreaming ? nil : ChatReactionTarget(node: node) }
+    /// 长按菜单底部：时间 · 字数 · token（10-07）
+    private var menuInfoText: String {
+        var parts: [String] = []
+        if let t = node.createTime { parts.append(t.formatted(.dateTime.month().day().hour().minute())) }
+        let chars = ContentCleaner.visibleText(node.content, isUser: isUser, cacheKey: node.id).count
+        parts.append("\(chars) 字")
+        if let o = node.usageOutputTokens, o > 0 { parts.append("\(o) tokens") }
+        if let c = node.usageCacheReadTokens, c > 0 { parts.append("缓存命中 \(c)") }
+        return parts.joined(separator: " · ")
+    }
     private var menuSpecsForWrapper: [MenuActionSpec] { useSystemBubbleMenu ? [] : nodeMenuSpecs() }
     private var wrapperCornerRadius: Double { chatBubbleMode ? bubbleModeCornerRadius : bubbleCornerRadius }
 
@@ -2700,12 +3037,10 @@ struct BubbleView: View {
             // Bubble（[B·砖3] iOS 包 BubbleMenuLiftWrapper：长按走自定义浮层，不用系统 contextMenu——
             // 反转列表下系统 lift 快照会颠倒（七月三雷之二）；浮层零件 592074d4 早已进仓，这里接线）
             BubbleMenuLiftWrapper(isUser: isUser, cornerRadius: wrapperCornerRadius, actions: menuSpecsForWrapper,
-                                  reactionTarget: menuReactionTarget,
+                                  reactionTarget: menuReactionTarget, infoText: menuInfoText,
                                   // round 11：浮层预览换 UITextView 可选字副本（MarkdownUI 不支持 textSelection）
                                   previewContent: {
-                                      let raw = ContentCleaner.clean(node.content, cacheKey: node.id)
-                                      let body = isUser ? raw : ContentCleaner.extractThinking(from: raw).content
-                                      return AnyView(SelectableTextPreview(text: body, fontSize: 15 * (fontScale > 0 ? fontScale : 1.0),
+                                      return AnyView(SelectableTextPreview(text: currentMenuText, fontSize: 15 * (fontScale > 0 ? fontScale : 1.0),
                                                                            textColor: UIColor(Theme.textPrimary)))
                                   }) {
             VStack(alignment: .leading, spacing: 6) {
@@ -2727,6 +3062,16 @@ struct BubbleView: View {
                 //   3. isCCBridgeProvider 由非响应式 UserDefaults 裸读算出，切 provider 后滞后一轮
                 // 症状：新回复等待期间，气泡里挂出「CC 思考过程」，点开是上一轮的内容。
                 let shouldTruncate = !expandAllMessages && !isExpanded && cleaned.count > truncateLength
+
+                // Keep the preview at one structural location when streaming adds segments.
+                // Moving its sheet host between branches can interrupt an in-flight presentation.
+                let segmentsHaveThinking = node.segments?.contains { segment in
+                    if case .thinking = segment { return true }
+                    return false
+                } ?? false
+                if !isUser && !segmentsHaveThinking {
+                    thinkingPreview(staticThinking: thinkingResult?.thinking ?? "")
+                }
 
                 if isUser {
                     if isEditing {
@@ -2791,14 +3136,6 @@ struct BubbleView: View {
                             .lineSpacing(4 * (fontScale > 0 ? fontScale : 1.0) * lineSpacingScale)
                     }
                 } else if let segs = node.segments, segs.hasRenderableSegments {
-                    // 思考链兜底：segments 里没有 .thinking 段时（CC 标记式 / deepseek 流式），
-                    // 用共用预览补渲染，否则思考链整体丢失。
-                    let segsHaveThinking = segs.contains { seg in
-                        if case .thinking = seg { return true } else { return false }
-                    }
-                    if !segsHaveThinking {
-                        thinkingPreview(staticThinking: thinkingResult?.thinking ?? "")
-                    }
                     // Claude v2 导入：按段渲染（每段独立折叠，顺序严格）
                     // 10-03：他带图的回复，正文段里混着 [thinking]…[/thinking]（老数据），显示时剥掉
                     MessageSegmentsView(
@@ -2827,8 +3164,6 @@ struct BubbleView: View {
                             .textSelection(.enabled)
                     }
                 } else {
-                    thinkingPreview(staticThinking: thinkingResult?.thinking ?? "")
-
                     // Assistant content — 正则脚本渲染替换
                     let artifactForCard: ArtifactContent? = (!isUser && !isStreaming) ? ArtifactDetector.find(in: cleaned) : nil
                     let cleanedForDisplay = artifactForCard != nil ? ArtifactDetector.stripFirst(in: cleaned) : cleaned
@@ -2935,14 +3270,15 @@ struct BubbleView: View {
                 // 语音条胶囊（audioRef 不进 segments 渲染，这里单独画）
                 // D4：气泡模式下语音已在 BubbleModeRow 里一条一泡，外侧胶囊不再画
                 if !chatBubbleMode, let segs = node.segments {
-                    let voiceSegs: [(path: String, duration: Double?)] = segs.compactMap { seg in
-                        if case .audioRef(_, _, let p, let d, _) = seg { return (p, d) }
+                    let voiceSegs: [(path: String, duration: Double?, script: String?)] = segs.compactMap { seg in
+                        if case .audioRef(_, _, let p, let d, let sc) = seg { return (p, d, sc) }
                         return nil
                     }
                     ForEach(voiceSegs, id: \.path) { v in
                         VoiceCapsuleView(path: v.path, duration: v.duration,
-                                         nodeId: node.id, profileId: node.profileId, isUser: isUser)
-                            .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+                                         nodeId: node.id, profileId: node.profileId, isUser: isUser,
+                                         sourceScript: v.script)
+                        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
                     }
                 }
                 // 生成中：画同形胶囊的「成型态」，而不是让占位行以纯文字露脸
@@ -3018,7 +3354,7 @@ struct BubbleView: View {
                         .padding(.top, 8)
 
                         SelectableTextOverlay(
-                            text: ContentCleaner.clean(node.content, cacheKey: node.id),
+                            text: currentMenuText,
                             font: .systemFont(ofSize: 13.5 * CGFloat(fontScale > 0 ? fontScale : 1.0)),
                             textColor: UIColor(Theme.textPrimary),
                             isActive: $isSelectingText
@@ -3069,7 +3405,7 @@ struct BubbleView: View {
                 HStack(spacing: 16) {
                     // Copy
                     Button {
-                        UIPasteboard.general.string = ContentCleaner.clean(node.content, cacheKey: node.id)
+                        UIPasteboard.general.string = currentMenuText
                         HapticService.shared.copyText()
                         onNotice?("已复制")
                     } label: {
@@ -3472,3 +3808,62 @@ private struct TransientNoticeCapsule: View {
 }
 
 // BubbleAttachmentItem 已随粟粟原文搬运挪到 Views/BubbleAttachmentStrip.swift（2026-08-30）
+
+
+/// 录音条（10-05）：红点 + 时长 + 一排跟着声音跳的柱子 + 提示；锁定后出「取消 / 发送」
+struct VoiceRecordingRow: View {
+    let levels: [Float]
+    let elapsed: TimeInterval
+    let cancelArmed: Bool
+    let locked: Bool
+    let onCancel: () -> Void
+    let onSend: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle().fill(Theme.danger).frame(width: 8, height: 8)
+            Text(String(format: "%d:%02d", Int(elapsed) / 60, Int(elapsed) % 60))
+                .font(.system(size: 13, weight: .medium).monospacedDigit())
+                .foregroundColor(Theme.textPrimary)
+            // 声浪：最近 40 格电平，右边最新
+            HStack(alignment: .center, spacing: 2) {
+                ForEach(0..<40, id: \.self) { i in
+                    let k = i - (40 - levels.count)
+                    let v = k >= 0 ? CGFloat(levels[k]) : 0
+                    Capsule()
+                        .fill(cancelArmed ? Theme.danger.opacity(0.6) : Theme.branchIndicator.opacity(0.35 + Double(v) * 0.65))
+                        .frame(width: 2.5, height: 3 + v * 20)
+                }
+            }
+            .frame(height: 24)
+            .animation(.easeOut(duration: 0.08), value: levels.count)
+            Spacer(minLength: 4)
+            if locked {
+                Button("取消", action: onCancel)
+                    .font(.system(size: 13)).foregroundColor(Theme.textMuted)
+                Button(action: onSend) {
+                    Text("发送").font(.system(size: 13, weight: .semibold)).foregroundColor(.white)
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .background(Capsule().fill(Theme.branchIndicator))
+                }
+                .buttonStyle(.plain)
+            } else {
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(cancelArmed ? "松手取消" : "← 左滑取消")
+                        .font(.system(size: 11)).foregroundColor(cancelArmed ? Theme.danger : Theme.textMuted)
+                    Text("↑ 上滑锁定").font(.system(size: 11)).foregroundColor(Theme.textMuted)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+    }
+}
+
+/// 左右抖一下
+struct ShakeEffect: GeometryEffect {
+    var animatableData: CGFloat
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        ProjectionTransform(CGAffineTransform(translationX: 8 * sin(animatableData * .pi * 4), y: 0))
+    }
+}
