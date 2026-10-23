@@ -10,6 +10,7 @@ final class RawBackupController: ObservableObject {
     @Published var result: RawBackupExporter.Result?
     @Published var errorText: String?
     @Published var shareItem: ExportShareItem?
+    private var bgTask: UIBackgroundTaskIdentifier = .invalid
 
     func start() {
         guard !running else { return }
@@ -20,6 +21,10 @@ final class RawBackupController: ObservableObject {
         total = 0
         label = "准备中"
         UIApplication.shared.isIdleTimerDisabled = true
+        // 切到后台时向系统申请一小段宽限时间（通常约 30 秒），短暂切走不至于中断
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "RawBackup") { [weak self] in
+            self?.endBackgroundTask()
+        }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
                 let r = try RawBackupExporter.run { d, t, l in
@@ -46,6 +51,13 @@ final class RawBackupController: ObservableObject {
     private func finish() {
         running = false
         UIApplication.shared.isIdleTimerDisabled = false
+        endBackgroundTask()
+    }
+
+    private func endBackgroundTask() {
+        guard bgTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(bgTask)
+        bgTask = .invalid
     }
 }
 
@@ -64,7 +76,7 @@ struct RawBackupSection: View {
                         .font(.caption)
                         .foregroundColor(Theme.textMuted)
                         .lineLimit(1)
-                    Text("请保持 App 在前台、屏幕亮着")
+                    Text("请尽量留在本页面；短暂切走约 30 秒内回来不会中断")
                         .font(.caption)
                         .foregroundColor(Theme.textMuted)
                 }
