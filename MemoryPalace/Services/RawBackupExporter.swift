@@ -150,20 +150,35 @@ enum RawBackupExporter {
             sqliteRecords.append(SQLiteRecord(path: s.entryPath, integrity: integrity, tables: tables))
             let size = Int64((try? snap.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
             files.append(FileRecord(path: s.entryPath, size: size, sha256: try sha256(of: snap), kind: "sqlite-snapshot"))
-            try archive.addEntry(with: s.entryPath, fileURL: snap, compressionMethod: .deflate)
+            try archive.addEntry(with: s.entryPath, fileURL: snap, compressionMethod: .deflate, bufferSize: chunkSize)
             try? fm.removeItem(at: snap)
             done += 1
         }
 
         // 4. 普通文件
+        let plainBytes = plain.reduce(Int64(0)) { $0 + $1.size }
+        var bytesDone: Int64 = 0
+        let mb: (Int64) -> String = { String(format: "%.0f", Double($0) / 1_048_576) }
         for s in plain {
-            progress(done, total, s.url.lastPathComponent)
+            progress(done, total, "\(mb(bytesDone))/\(mb(plainBytes)) MB · \(s.url.lastPathComponent)")
             do {
-                try autoreleasepool {
-                    let hash = try sha256(of: s.url)
-                    try archive.addEntry(with: s.entryPath, fileURL: s.url, compressionMethod: .deflate)
-                    files.append(FileRecord(path: s.entryPath, size: s.size, sha256: hash, kind: "file"))
+                // 一次读取：边写入 zip 边算 SHA256；已压缩格式直接存储不再压缩；1MB 大块读写
+                let h = try FileHandle(forReadingFrom: s.url)
+                defer { try? h.close() }
+                var hasher = SHA256()
+                var expected: Int64 = 0
+                try archive.addEntry(with: s.entryPath, type: .file, uncompressedSize: s.size,
+                                     compressionMethod: compressionFor(s.url), bufferSize: chunkSize) { position, size in
+                    guard position == expected else { throw ExportError.sqlite("读取顺序异常 \(s.entryPath)") }
+                    let data: Data = try autoreleasepool { try h.read(upToCount: size) ?? Data() }
+                    guard data.count == size else { throw ExportError.sqlite("文件在打包时变化 \(s.entryPath)") }
+                    hasher.update(data: data)
+                    expected += Int64(size)
+                    return data
                 }
+                let hash = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+                files.append(FileRecord(path: s.entryPath, size: s.size, sha256: hash, kind: "file"))
+                bytesDone += s.size
             } catch {
                 skipped.append("\(s.entryPath): \(error.localizedDescription)")
             }
@@ -226,6 +241,16 @@ enum RawBackupExporter {
     }
 
     // MARK: - Helpers
+
+    static let chunkSize = 1 << 20
+
+    /// 图片、音视频、压缩包等本身已压缩，再 deflate 只耗时间不省空间
+    static func compressionFor(_ url: URL) -> CompressionMethod {
+        let stored: Set<String> = ["jpg", "jpeg", "png", "heic", "heif", "gif", "webp", "avif",
+                                   "mp3", "m4a", "aac", "wav", "caf", "opus", "ogg", "flac",
+                                   "mp4", "mov", "m4v", "zip", "gz", "epub", "pdf", "woff", "woff2", "ttf", "otf"]
+        return stored.contains(url.pathExtension.lowercased()) ? .none : .deflate
+    }
 
     static func isSQLite(_ url: URL) -> Bool {
         guard let h = try? FileHandle(forReadingFrom: url) else { return false }
