@@ -574,6 +574,18 @@ struct ContentView: View {
                                     }
                                 }
                             }
+                            // 10-05：对话内查找之前只有 ⌘F 能开，手机上根本没入口
+                            Button {
+                                NotificationCenter.default.post(name: .toggleInConvSearch, object: nil)
+                            } label: {
+                                Label("在对话里找", systemImage: "magnifyingglass")
+                            }
+                            // 10-05 一键补发：他那边写好发了、App 这边没长出来 → 向 hub 要最近 20 条，缺的补上
+                            Button {
+                                CCBridgeWebSocketClient.shared.requestReplay(chatId: conv.id)
+                            } label: {
+                                Label("补收主人的回复", systemImage: "arrow.down.message")
+                            }
                             Button {
                                 showChangeProjectSheet = true
                             } label: {

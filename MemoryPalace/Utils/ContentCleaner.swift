@@ -6,15 +6,27 @@ import Foundation
 enum ContentCleaner {
 
     /// Cache cleaned results to avoid repeated regex work on re-renders
-    private static let cache = NSCache<NSString, NSString>()
+    private final class CacheEntry {
+        let source: String
+        let result: String
+
+        init(source: String, result: String) {
+            self.source = source
+            self.result = result
+        }
+    }
+
+    private static let cache = NSCache<NSString, CacheEntry>()
 
     /// Clean all ChatGPT annotation artifacts from text
     /// - Parameter cached: false = 不读不写缓存（索引回填一次扫几万条，别把缓存冲掉）——粟粟 S5
     static func clean(_ text: String, cacheKey: String? = nil, cached useCache: Bool = true) -> String {
         // Check cache first
         let key = (cacheKey ?? String(text.hashValue)) as NSString
-        if useCache, let cached = cache.object(forKey: key) {
-            return cached as String
+        // A node keeps its ID while streaming/editing. Never reuse an earlier body,
+        // including an empty placeholder or a same-length replacement.
+        if useCache, let cached = cache.object(forKey: key), cached.source == text {
+            return cached.result
         }
 
         // Fast path: skip cleaning if no PUA characters or annotation markers present
@@ -24,7 +36,7 @@ enum ContentCleaner {
         let hasReaction = text.contains("[回应]")
         let hasQuote = text.hasPrefix("[引用]") || text.contains("[/回应]\n[引用]")
         if !hasPUA && !hasDagger && !hasTurnRef && !hasReaction && !hasQuote {
-            if useCache { cache.setObject(text as NSString, forKey: key) }
+            if useCache { cache.setObject(CacheEntry(source: text, result: text), forKey: key) }
             return text
         }
 
@@ -68,7 +80,7 @@ enum ContentCleaner {
             )
         }
 
-        if useCache { cache.setObject(result as NSString, forKey: key) }
+        if useCache { cache.setObject(CacheEntry(source: text, result: result), forKey: key) }
         return result
     }
 
