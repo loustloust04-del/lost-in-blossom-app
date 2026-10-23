@@ -10,40 +10,38 @@ struct MusicPanelView: View {
     @Environment(\.modelContext) private var context
     @Query private var allSongs: [Song]
     @State private var player = MusicPlayer.shared
-    @AppStorage("listenTogetherOn") private var listenTogether = false
     @State private var showImporter = false
-    @State private var showLyrics = false
-    @State private var tab = 0          // 0=云端曲库 1=本地导入
+    @State private var tab = 0          // 正在听 / 曲库 / 本地
 
     private var songs: [Song] {
-        allSongs.filter { $0.profileId == profileId }
+        allSongs.filter { $0.profileId == profileId && !$0.isRemote }
             .sorted { ($0.lastPlayedAt ?? $0.addedAt) > ($1.lastPlayedAt ?? $1.addedAt) }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             Picker("", selection: $tab) {
-                Text("我的音乐").tag(0)
-                Text("导入的").tag(1)
+                Text("正在听").tag(0)
+                Text("曲库").tag(1)
+                Text("本地").tag(2)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 14).padding(.top, 10)
 
             if tab == 0 {
+                MusicListeningView(profileId: profileId, player: player) { tab = 1 }
+            } else if tab == 1 {
                 CloudMusicView(profileId: profileId)
             } else {
                 if songs.isEmpty { emptyState } else { list }
             }
-            if player.currentSong != nil { miniPlayer }
+            if tab != 0 && player.currentSong != nil { miniPlayer }
         }
         .background(Theme.sidebarBg.ignoresSafeArea())
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [.audio],
                       allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { importFiles(urls) }
-        }
-        .sheet(isPresented: $showLyrics) {
-            LyricsSheet(player: player) { showLyrics = false }
         }
         .onAppear {
             let pid = profileId
@@ -136,78 +134,33 @@ struct MusicPanelView: View {
     }
 
     private var miniPlayer: some View {
-        VStack(spacing: 6) {
-            if let line = player.currentLyricText {
-                Text(line)
-                    .font(.system(size: 12))
-                    .foregroundColor(ConsoleView.greenDeep)
-                    .lineLimit(1)
+        HStack(spacing: 8) {
+            Button { tab = 0 } label: {
+                HStack(spacing: 10) {
+                    MusicArtwork(url: player.currentSong?.artworkURL, size: 44)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(player.currentSong?.title ?? "").font(.subheadline.weight(.semibold)).lineLimit(1)
+                        Text(player.currentSong?.displayArtist ?? "").font(.caption).foregroundStyle(Theme.textMuted).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
             }
-            HStack(spacing: 14) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(player.currentSong?.title ?? "")
-                        .font(.system(size: Theme.F.body, weight: .medium))
-                        .foregroundColor(Theme.textPrimary).lineLimit(1)
-                    Text(player.currentSong?.displayArtist ?? "")
-                        .font(.system(size: Theme.F.caption)).foregroundColor(Theme.textMuted)
-                }
-                Spacer()
-                Button {
-                    let pid = profileId
-                    player.previous { MusicPanelView.resolve($0, profileId: pid) }
-                } label: { Image(systemName: "backward.fill") }
-                Button { player.toggle() } label: {
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 18))
-                }
-                Button {
-                    let pid = profileId
-                    player.next { MusicPanelView.resolve($0, profileId: pid) }
-                } label: { Image(systemName: "forward.fill") }
-                Button { showLyrics = true } label: { Image(systemName: "text.quote") }
-                // 播放模式：顺序循环 → 单曲循环 → 随机（点按轮换；单曲循环连放≥3遍会推心情信号）
-                Button {
-                    switch player.playMode {
-                    case .sequence:  player.playMode = .repeatOne
-                    case .repeatOne: player.playMode = .shuffle
-                    case .shuffle:   player.playMode = .sequence
-                    }
-                } label: {
-                    Image(systemName: player.playMode == .repeatOne ? "repeat.1"
-                          : player.playMode == .shuffle ? "shuffle" : "repeat")
-                        .foregroundColor(player.playMode == .sequence ? ConsoleView.greenDeep : ConsoleView.green)
-                }
-                // 睡眠定时器：月亮菜单（15/30/60 分钟 / 听完这首停 / 取消）
-                Menu {
-                    Button("15 分钟后停") { player.setSleepTimer(minutes: 15) }
-                    Button("30 分钟后停") { player.setSleepTimer(minutes: 30) }
-                    Button("60 分钟后停") { player.setSleepTimer(minutes: 60) }
-                    Button(player.stopAfterCurrent ? "✓ 听完这首停" : "听完这首停") { player.toggleStopAfterCurrent() }
-                    if player.sleepTimerEndsAt != nil || player.stopAfterCurrent {
-                        Button("取消定时", role: .destructive) { player.setSleepTimer(minutes: nil) }
-                    }
-                } label: {
-                    Image(systemName: (player.sleepTimerEndsAt != nil || player.stopAfterCurrent) ? "moon.zzz.fill" : "moon.zzz")
-                        .foregroundColor((player.sleepTimerEndsAt != nil || player.stopAfterCurrent) ? ConsoleView.green : ConsoleView.greenDeep)
-                }
-                // T2 叫他一起听：邀请这个动作本身有仪式感（plan-listen-together-v2 D2）。
-                // 亮 = 共听中（心跳替你续命，切歌不断场；停播 5min 网关侧自动过期）
-                Button {
-                    listenTogether.toggle()
-                    let song = player.currentSong
-                    Task.detached(priority: .utility) {
-                        await ListenTogetherClient.set(on: listenTogether, title: song?.title, artist: song?.artist)
-                    }
-                } label: {
-                    Image(systemName: listenTogether ? "person.2.fill" : "person.2")
-                        .foregroundColor(listenTogether ? ConsoleView.green : ConsoleView.greenDeep)
-                }
+            .accessibilityLabel("打开正在听")
+            Button { player.toggle() } label: {
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 44, height: 44)
             }
-            .foregroundColor(ConsoleView.greenDeep)
-            ProgressView(value: player.duration > 0 ? min(1, player.currentTime / player.duration) : 0)
-                .tint(ConsoleView.green)
+            .accessibilityLabel(player.isPlaying ? "暂停" : "播放")
+            Button { player.next { MusicPanelView.resolve($0, profileId: profileId) } } label: {
+                Image(systemName: "forward.fill").frame(width: 44, height: 44)
+            }
+            .accessibilityLabel("下一首")
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
-        .background(Theme.mainBg)
+        .buttonStyle(.plain)
+        .foregroundStyle(Theme.textPrimary)
+        .padding(10)
+        .background(ConsoleView.green.opacity(0.10), in: RoundedRectangle(cornerRadius: 18))
+        .padding(.horizontal, 12).padding(.vertical, 8)
     }
 
     private func importFiles(_ urls: [URL]) {
@@ -274,14 +227,15 @@ struct MusicPanelView: View {
 struct LyricsSheet: View {
     let player: MusicPlayer
     var onClose: () -> Void
+    @State private var followsPlayback = true
 
     var body: some View {
         NavigationStack {
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(spacing: 16) {
+                    VStack(spacing: 24) {
                         if player.lyrics.isEmpty {
-                            Text("这首没有歌词\n（把同名 .lrc 拖进来就有了）")
+                            Text("这首歌暂时没有歌词")
                                 .font(.system(size: Theme.F.caption))
                                 .foregroundColor(Theme.textMuted)
                                 .multilineTextAlignment(.center)
@@ -289,9 +243,8 @@ struct LyricsSheet: View {
                         }
                         ForEach(Array(player.lyrics.enumerated()), id: \.element.id) { i, l in
                             Text(l.text)
-                                .font(.system(size: i == player.currentLyricIndex ? 18 : 15,
-                                              weight: i == player.currentLyricIndex ? .semibold : .regular))
-                                .foregroundColor(i == player.currentLyricIndex ? Theme.textPrimary : Theme.textMuted)
+                                .font(.title3.weight(.semibold))
+                                .foregroundColor(i == player.currentLyricIndex ? ConsoleView.greenDeep : Theme.textMuted)
                                 .multilineTextAlignment(.center)
                                 .frame(maxWidth: .infinity)
                                 .id(i)
@@ -305,8 +258,18 @@ struct LyricsSheet: View {
                     }
                     .padding(.horizontal, 24).padding(.vertical, 40)
                 }
+                .simultaneousGesture(DragGesture(minimumDistance: 12).onChanged { _ in followsPlayback = false })
+                .onAppear {
+                    if let idx = player.currentLyricIndex { proxy.scrollTo(idx, anchor: .center) }
+                }
+                .onChange(of: followsPlayback) { _, follows in
+                    if follows, let idx = player.currentLyricIndex {
+                        withAnimation { proxy.scrollTo(idx, anchor: .center) }
+                    }
+                }
+                .onChange(of: player.currentSong?.id) { _, _ in followsPlayback = true }
                 .onChange(of: player.currentLyricIndex) { _, idx in
-                    guard let idx else { return }
+                    guard followsPlayback, let idx else { return }
                     withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(idx, anchor: .center) }
                 }
             }
@@ -314,6 +277,10 @@ struct LyricsSheet: View {
             .navigationTitle(player.currentSong?.title ?? "歌词")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(followsPlayback ? "正在跟随" : "跟随当前") { followsPlayback = true }
+                        .disabled(followsPlayback)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("收起") { onClose() }.foregroundColor(ConsoleView.greenDeep)
                 }
@@ -356,9 +323,9 @@ extension NowPlayingReporter {
 
 /// T2 共听开关（网关 /listen/start|stop；路由随下次网关重启生效，之前静默失败无副作用）
 enum ListenTogetherClient {
-    static func set(on: Bool, title: String?, artist: String?) async {
+    static func set(on: Bool, title: String?, artist: String?) async -> Bool {
         let base = UserDefaults.standard.string(forKey: "gatewayBaseURL") ?? "https://blossom.amberrib.com"
-        guard let url = URL(string: "\(base)/listen/\(on ? "start" : "stop")?key=bunny-lib-2026") else { return }
+        guard let url = URL(string: "\(base)/listen/\(on ? "start" : "stop")?key=bunny-lib-2026") else { return false }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -367,7 +334,14 @@ enum ListenTogetherClient {
         if let title { body["title"] = title }
         if let artist { body["artist"] = artist }
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        _ = try? await URLSession.shared.data(for: req)
+        do {
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard let response = response as? HTTPURLResponse,
+                  (200..<300).contains(response.statusCode),
+                  let result = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return false }
+            return result["ok"] as? Bool == true
+        } catch { return false }
     }
 }
 

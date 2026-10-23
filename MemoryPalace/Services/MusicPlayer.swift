@@ -23,9 +23,8 @@ final class MusicPlayer: NSObject {
 
     /// 播放模式（播放器本体优化①）：顺序循环 / 单曲循环 / 随机。落 AppStorage 记住习惯。
     enum PlayMode: String { case sequence, repeatOne, shuffle }
-    var playMode: PlayMode {
-        get { PlayMode(rawValue: UserDefaults.standard.string(forKey: "musicPlayMode") ?? "") ?? .sequence }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: "musicPlayMode") }
+    var playMode: PlayMode = PlayMode(rawValue: UserDefaults.standard.string(forKey: "musicPlayMode") ?? "") ?? .sequence {
+        didSet { UserDefaults.standard.set(playMode.rawValue, forKey: "musicPlayMode") }
     }
 
     /// 单曲循环 = 心情信号：同一首连放 ≥3 遍推他一条（liveline kind=music_loop，
