@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 import AVFoundation
 
 // MARK: - 语音条设置（设置-朗读 内）
@@ -36,6 +39,7 @@ struct VoiceMessageSettingsIOSSections: View {
 /// ElevenLabs API Key 输入（Keychain account "elevenlabs"，回车/离开时保存）
 struct VoiceKeyField: View {
     @State private var key = ""
+    @State private var copied = false
     @State private var loaded = false
     @AppStorage(VoiceTuning.providerKey) private var providerRaw = TTSProvider.elevenLabs.rawValue
     private var provider: TTSProvider { TTSProvider(rawValue: providerRaw) ?? .elevenLabs }
@@ -46,6 +50,18 @@ struct VoiceKeyField: View {
                 .textFieldStyle(.plain)
                 .onSubmit { save() }
             if !key.isEmpty {
+                // 复制已存的 Key（迁移到新兔时要用；钥匙串里的值不在整包备份里）
+                Button {
+                    #if os(iOS)
+                    UIPasteboard.general.string = KeychainStore.get(account: provider.keychainAccount) ?? key
+                    #endif
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                } label: {
+                    Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
+                        .foregroundColor(copied ? Theme.branchIndicator : Theme.textMuted.opacity(0.7))
+                }
+                .buttonStyle(.plain)
                 Button {
                     key = ""
                     save()
