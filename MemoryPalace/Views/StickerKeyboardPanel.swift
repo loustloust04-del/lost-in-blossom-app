@@ -135,8 +135,8 @@ struct StickerKeyboardPanel: View {
         }
         .sheet(isPresented: $showNoteEditor) {
             if let pid = profileManager?.currentProfile.id {
-                NoteStickerEditor { text, style in
-                    stickerVM.createNoteAsset(content: text, style: style.rawValue, profileId: pid, context: modelContext)
+                NoteStickerEditor { text, style, font in
+                    stickerVM.createNoteAsset(content: text, style: style.rawValue, font: font, profileId: pid, context: modelContext)
                 }
             }
         }
@@ -171,7 +171,7 @@ struct PanelStickerCell: View {
         Group {
             if asset.isNote {
                 Text(asset.noteContent ?? "")
-                    .font(.system(size: 9))
+                    .font(NoteStickerFont.font(asset.noteFont, size: 9))
                     .foregroundColor(Theme.textPrimary)
                     .lineLimit(3)
                     .padding(5)

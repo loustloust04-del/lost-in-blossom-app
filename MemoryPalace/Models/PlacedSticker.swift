@@ -26,6 +26,8 @@ final class PlacedSticker {
     var noteContent: String?            // nil = 图片贴纸
     var noteStyle: String?              // "yellow_square", "pink_rounded", "glass", "torn_paper"
 
+    var noteFont: String?              // nil = 默认字体（兼容旧便签）
+
     // 状态
     var isLocked: Bool = false
 
@@ -47,6 +49,7 @@ final class PlacedSticker {
         zIndex: Int = 0,
         noteContent: String? = nil,
         noteStyle: String? = nil,
+        noteFont: String? = nil,
         profileId: String
     ) {
         self.stickerAssetId = stickerAssetId
@@ -59,6 +62,7 @@ final class PlacedSticker {
         self.zIndex = zIndex
         self.noteContent = noteContent
         self.noteStyle = noteStyle
+        self.noteFont = noteFont
         self.profileId = profileId
     }
 }

@@ -348,7 +348,7 @@ struct BubbleModeRow: View {
                 singleBubble(hasTail: voiceTail && i == voices.count - 1) {
                     VoiceCapsuleView(path: voices[i].path, duration: voices[i].duration,
                                      nodeId: node.id, profileId: node.profileId,
-                                     isUser: isUser, embedded: true)
+                                     isUser: isUser, embedded: true, sourceScript: voices[i].script)
                 }
             }
             if isComplex {
@@ -462,10 +462,10 @@ struct BubbleModeRow: View {
     }
 
     /// 语音段：气泡模式渲染成独立语音气泡（文章模式在 BubbleView 外侧胶囊，此处对应版）
-    private var voiceSegs: [(path: String, duration: Double?)] {
+    private var voiceSegs: [(path: String, duration: Double?, script: String?)] {
         guard let segs = node.segments else { return [] }
         return segs.compactMap { seg in
-            if case .audioRef(_, _, let p, let d, _) = seg { return (p, d) }
+            if case .audioRef(_, _, let p, let d, let script) = seg { return (p, d, script) }
             return nil
         }
     }

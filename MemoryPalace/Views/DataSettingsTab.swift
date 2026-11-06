@@ -188,26 +188,8 @@ struct DataSettingsTab: View {
             .listRowBackground(Theme.mainBg)
             .listRowSeparator(.hidden)
 
-            Section {
-                HStack {
-                    Text("整包备份（迁移换机）")
-                        .font(.system(size: Theme.F.body))
-                        .foregroundColor(Theme.textMuted)
-                    Spacer()
-                    Text("即将支持")
-                        .font(.caption)
-                        .foregroundColor(Theme.textMuted)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(Theme.accent.opacity(0.4)))
-                }
-            } header: {
-                Text("导出全局数据")
-            } footer: {
-                Text("包含楼层列表、API、预设、助手模板、世界书、记忆、贴纸等全部配置。")
-            }
-            .listRowBackground(Theme.mainBg)
-            .listRowSeparator(.hidden)
+            // Bunny Phase A：原样整包备份（替换原「即将支持」占位）
+            RawBackupSection()
 
             Section("导入历史") {
                 ImportHistoryView(profileId: profileManager?.currentProfile.id ?? "")

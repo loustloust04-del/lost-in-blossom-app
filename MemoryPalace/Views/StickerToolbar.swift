@@ -76,10 +76,10 @@ struct StickerToolbar: View {
         .frame(maxWidth: .infinity)
         .sheet(isPresented: $showNoteEditor) {
             if let pid = profileManager?.currentProfile.id {
-                NoteStickerEditor { text, style in
+                NoteStickerEditor { text, style, font in
                     stickerVM.createNoteAsset(
                         content: text,
-                        style: style.rawValue,
+                        style: style.rawValue, font: font,
                         profileId: pid,
                         context: modelContext
                     )

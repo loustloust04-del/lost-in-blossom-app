@@ -15,7 +15,7 @@ enum IntimacySyncService {
     /// 她改了 → 推上去
     static func push(date: Date, note: String, myNote: String? = nil,
                      tags: [String]? = nil, milestone: String? = nil, deleted: Bool = false) {
-        guard let url = URL(string: "\(base)/api/intimacy?key=bunny-lib-2026") else { return }
+        guard let url = URL(string: "\(base)/api/intimacy?key=\(GatewayKey.query)") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -34,7 +34,7 @@ enum IntimacySyncService {
     /// 他改了 → 拉下来（打开健康面板/亲密详情时调）
     @MainActor
     static func pull(context: ModelContext, profileId: String) async {
-        guard let url = URL(string: "\(base)/api/intimacy?key=bunny-lib-2026") else { return }
+        guard let url = URL(string: "\(base)/api/intimacy?key=\(GatewayKey.query)") else { return }
         var req = URLRequest(url: url); req.timeoutInterval = 10
         guard let (data, _) = try? await URLSession.shared.data(for: req),
               let wrap = try? JSONDecoder().decode(Wrap.self, from: data) else { return }

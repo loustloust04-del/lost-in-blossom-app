@@ -93,7 +93,7 @@ struct StickerLibraryView: View {
                                 }
                                 if asset.isNote {
                                     Button {
-                                        stickerVM.shareNoteAsPNG(content: asset.noteContent ?? "", style: asset.noteStyle ?? "yellow_square")
+                                        stickerVM.shareNoteAsPNG(content: asset.noteContent ?? "", style: asset.noteStyle ?? "yellow_square", font: asset.noteFont)
                                     } label: {
                                         Label("导出为图片", systemImage: "square.and.arrow.up")
                                     }
@@ -134,12 +134,12 @@ struct StickerLibraryView: View {
             }
         }
         .sheet(isPresented: $showNoteEditor) {
-            NoteStickerEditor { text, style in
+            NoteStickerEditor { text, style, font in
                 // 便签存入贴纸库（不直接贴画布，用户从库里拖）
                 guard let pid = profileManager?.currentProfile.id else { return }
                 stickerVM.createNoteAsset(
                     content: text,
-                    style: style.rawValue,
+                    style: style.rawValue, font: font,
                     profileId: pid,
                     context: modelContext
                 )
@@ -210,7 +210,7 @@ struct StickerLibraryView: View {
         let y = max(200, CGFloat(viewModel.currentPath.count) * 50)
         if asset.isNote {
             stickerVM.placeNote(
-                content: asset.noteContent ?? "", style: asset.noteStyle ?? "yellow_square",
+                content: asset.noteContent ?? "", style: asset.noteStyle ?? "yellow_square", font: asset.noteFont,
                 conversationId: convId, position: CGPoint(x: 200, y: y),
                 nearestMessageId: viewModel.currentPath.first?.id,
                 profileId: pid, context: modelContext
@@ -333,7 +333,7 @@ struct NoteThumbnailView: View {
     var body: some View {
         VStack(spacing: 4) {
             Text(asset.noteContent ?? "")
-                .font(.system(size: 9))
+                .font(NoteStickerFont.font(asset.noteFont, size: 9))
                 .foregroundColor(Theme.textPrimary)
                 .lineLimit(3)
                 .padding(6)

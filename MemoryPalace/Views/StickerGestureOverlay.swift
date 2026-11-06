@@ -440,7 +440,7 @@ struct StickerCanvasGestureOverlay: UIViewRepresentable {
                         self.vm.editingNoteStickerId = sticker.id
                     })
                     actions.append(UIAction(title: "导出为图片", image: UIImage(systemName: "square.and.arrow.up")) { _ in
-                        self.vm.shareNoteAsPNG(content: sticker.noteContent ?? "", style: sticker.noteStyle ?? "yellow_square")
+                        self.vm.shareNoteAsPNG(content: sticker.noteContent ?? "", style: sticker.noteStyle ?? "yellow_square", font: sticker.noteFont)
                     })
                 }
 

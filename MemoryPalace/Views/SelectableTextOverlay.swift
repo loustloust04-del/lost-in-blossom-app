@@ -27,6 +27,6 @@ struct SelectableTextOverlay: UIViewRepresentable {
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
-        tv.text = text
+        if tv.text != text { tv.text = text }
     }
 }

@@ -367,34 +367,10 @@ struct SpoilerView: View {
 /// 一致的 Button + @State 结构，命中区域扩到整行，保证可点。
 private struct ThinkingBlockView: View {
     let text: String
-    @State private var expanded = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9))
-                    Text("思考")
-                        .font(.system(size: 11, weight: .medium))
-                    Spacer()
-                }
-                .foregroundColor(Theme.textMuted.opacity(0.7))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if expanded {
-                Text(text)
-                    .font(.system(size: 11))
-                    .foregroundColor(Theme.textMuted)
-                    .textSelection(.enabled)
-                    .padding(.leading, 14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
+        // Share the full-size tap target and the user's inline/sheet preference.
+        ThinkingDisclosure(label: "思考", text: text)
     }
 }
 

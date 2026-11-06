@@ -16,7 +16,7 @@ enum LivelineReporter {
         // 而下面 isEnabled 写的是「没设置过算 true」。两处不一致 = 开关名义上默认开、
         // 实际一直关着，直播线一条都没发出去过（兔兔实测「从来没反应」）。
         guard isEnabled else { return }
-        guard let url = URL(string: "\(base)/api/liveline?key=bunny-lib-2026") else { return }
+        guard let url = URL(string: "\(base)/api/liveline?key=\(GatewayKey.query)") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")

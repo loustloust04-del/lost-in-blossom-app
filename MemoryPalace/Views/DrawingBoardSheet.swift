@@ -256,25 +256,9 @@ struct DrawingBoardSheet: View {
     private var canvasView: some View {
         Canvas { context, size in
             for line in lines + [currentLine] {
-                guard line.points.count > 1 else { continue }
-                var path = Path()
-                path.move(to: line.points[0])
-                for i in 1..<line.points.count {
-                    let mid = CGPoint(
-                        x: (line.points[i - 1].x + line.points[i].x) / 2,
-                        y: (line.points[i - 1].y + line.points[i].y) / 2
-                    )
-                    path.addQuadCurve(to: mid, control: line.points[i - 1])
-                }
-                if let last = line.points.last { path.addLine(to: last) }
-
-                if line.isEraser {
-                    context.stroke(path, with: .color(devScreenColor),
-                                   style: StrokeStyle(lineWidth: line.lineWidth * 3, lineCap: .round, lineJoin: .round))
-                } else {
-                    context.stroke(path, with: .color(line.color),
-                                   style: StrokeStyle(lineWidth: line.lineWidth, lineCap: .round, lineJoin: .round))
-                }
+                guard let path = path(for: line) else { continue }
+                context.stroke(path, with: .color(line.isEraser ? devScreenColor : line.color),
+                               style: strokeStyle(for: line))
             }
         }
         .frame(width: canvasSize.width, height: canvasSize.height)
@@ -294,6 +278,25 @@ struct DrawingBoardSheet: View {
                     if !currentLine.points.isEmpty { lines.append(currentLine); currentLine = DrawingLine() }
                 }
         )
+    }
+
+    private func path(for line: DrawingLine) -> Path? {
+        guard line.points.count > 1 else { return nil }
+        var path = Path()
+        path.move(to: line.points[0])
+        for index in 1..<line.points.count {
+            let previous = line.points[index - 1]
+            let point = line.points[index]
+            let midpoint = CGPoint(x: (previous.x + point.x) / 2, y: (previous.y + point.y) / 2)
+            path.addQuadCurve(to: midpoint, control: previous)
+        }
+        if let last = line.points.last { path.addLine(to: last) }
+        return path
+    }
+
+    private func strokeStyle(for line: DrawingLine) -> StrokeStyle {
+        StrokeStyle(lineWidth: line.isEraser ? line.lineWidth * 3 : line.lineWidth,
+                    lineCap: .round, lineJoin: .round)
     }
 
     // MARK: - Dev Color Panel
@@ -370,17 +373,15 @@ struct DrawingBoardSheet: View {
 
     private func exportAndSave() {
         let drawingView = Canvas { context, size in
-            for line in lines where !line.isEraser {
-                guard line.points.count > 1 else { continue }
-                var path = Path()
-                path.move(to: line.points[0])
-                for i in 1..<line.points.count {
-                    let mid = CGPoint(x: (line.points[i-1].x + line.points[i].x)/2, y: (line.points[i-1].y + line.points[i].y)/2)
-                    path.addQuadCurve(to: mid, control: line.points[i - 1])
+            for line in lines {
+                guard let path = path(for: line) else { continue }
+                if line.isEraser {
+                    context.blendMode = .destinationOut
+                    context.stroke(path, with: .color(.black), style: strokeStyle(for: line))
+                    context.blendMode = .normal
+                } else {
+                    context.stroke(path, with: .color(line.color), style: strokeStyle(for: line))
                 }
-                if let last = line.points.last { path.addLine(to: last) }
-                context.stroke(path, with: .color(line.color),
-                               style: StrokeStyle(lineWidth: line.lineWidth, lineCap: .round, lineJoin: .round))
             }
         }.frame(width: canvasSize.width, height: canvasSize.height)
 

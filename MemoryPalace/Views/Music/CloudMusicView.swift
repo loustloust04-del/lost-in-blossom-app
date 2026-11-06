@@ -7,13 +7,8 @@ struct CloudMusicView: View {
     @Environment(\.modelContext) private var context
     @State private var player = MusicPlayer.shared
 
-    @State private var status: MusicLibraryClient.Status?
-    @State private var playlists: [MusicLibraryClient.Playlist] = []
-    @State private var openedList: MusicLibraryClient.Playlist?
-    @State private var listSongs: [MusicLibraryClient.RemoteSong] = []
+    @State private var browser = MusicLibraryBrowser()
     @State private var searchText = ""
-    @State private var searchResults: [MusicLibraryClient.RemoteSong] = []
-    @State private var loading = false
     @State private var loadingSongId: String?
 
     var body: some View {
@@ -21,10 +16,12 @@ struct CloudMusicView: View {
             searchBar
             content
         }
-        .task {
-            status = await MusicLibraryClient.status()
-            playlists = await MusicLibraryClient.playlists()
+        .task(id: profileId) {
+            searchText = ""
+            browser.start()
         }
+        .onChange(of: searchText) { _, text in browser.inputChanged(text) }
+        .onDisappear { browser.stop() }
     }
 
     private var searchBar: some View {
@@ -33,11 +30,13 @@ struct CloudMusicView: View {
             TextField("搜歌名、歌手", text: $searchText)
                 .font(.system(size: Theme.F.body))
                 .submitLabel(.search)
-                .onSubmit { runSearch() }
+                .onSubmit { browser.runSearch(searchText) }
             if !searchText.isEmpty {
-                Button { searchText = ""; searchResults = [] } label: {
+                Button { searchText = ""; browser.clearSearch() } label: {
                     Image(systemName: "xmark.circle.fill").foregroundColor(Theme.textMuted)
+                        .frame(minWidth: 44, minHeight: 44)
                 }
+                .accessibilityLabel("清空搜索")
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
@@ -47,62 +46,96 @@ struct CloudMusicView: View {
 
     @ViewBuilder
     private var content: some View {
-        if loading {
-            ProgressView().tint(ConsoleView.greenDeep).frame(maxHeight: .infinity)
-        } else if !searchResults.isEmpty {
-            songList(searchResults, title: "搜索结果")
-        } else if let l = openedList {
+        if let query = browser.submittedQuery {
+            switch browser.search {
+            case .idle, .loading:
+                loadingState("正在搜索…")
+            case .loaded(let songs):
+                if songs.isEmpty {
+                    messageState("没有找到相关歌曲", detail: "试试换个歌名或歌手，或清空搜索返回歌单。", icon: "magnifyingglass")
+                } else { songList(songs, title: "“\(query)”的搜索结果") }
+            case .failed(let message):
+                messageState("搜索暂时没完成", detail: message, icon: "wifi.exclamationmark", retry: { browser.runSearch(query) })
+            }
+        } else if let list = browser.openedList {
             VStack(spacing: 0) {
                 HStack {
-                    Button { openedList = nil; listSongs = [] } label: {
-                        Label(l.name, systemImage: "chevron.left")
-                            .font(.system(size: Theme.F.caption))
+                    Button { browser.closePlaylist() } label: {
+                        Label("返回歌单", systemImage: "chevron.left")
+                            .font(.system(size: Theme.F.caption)).frame(minHeight: 44)
                     }
                     .foregroundColor(ConsoleView.greenDeep)
                     Spacer()
+                    Text(list.name).font(.subheadline).foregroundStyle(Theme.textMuted).lineLimit(1)
                 }
-                .padding(.horizontal, 16).padding(.bottom, 6)
-                songList(listSongs, title: nil)
+                .padding(.horizontal, 16)
+                switch browser.playlist {
+                case .idle, .loading:
+                    loadingState("正在加载歌曲…")
+                case .loaded(let songs):
+                    if songs.isEmpty {
+                        messageState("这张歌单还没有歌曲", detail: "可以返回选另一张，或直接搜索喜欢的歌。", icon: "music.note.list")
+                    } else { songList(songs, title: nil) }
+                case .failed(let message):
+                    messageState("歌单暂时没加载出来", detail: message, icon: "wifi.exclamationmark", retry: { browser.open(list) })
+                }
             }
         } else {
-            playlistGrid
+            switch browser.catalogue {
+            case .idle, .loading:
+                loadingState("正在连接曲库…")
+            case .failed(let message):
+                messageState("暂时连接不上曲库", detail: message, icon: "wifi.exclamationmark", retry: { browser.reloadCatalogue() })
+            case .loaded(let catalogue):
+                if !catalogue.status.loggedIn {
+                    messageState("音源需要重新登录", detail: "登录状态已失效，重新扫码后再试。", icon: "person.crop.circle.badge.exclamationmark", retry: { browser.reloadCatalogue() })
+                } else if catalogue.playlists.isEmpty {
+                    messageState("还没有歌单", detail: "可以在上方搜索歌名或歌手。", icon: "music.note.list")
+                } else { playlistGrid(catalogue) }
+            }
         }
     }
 
-    private var playlistGrid: some View {
-        List {
-            if let s = status, s.loggedIn {
-                Section {
-                    ForEach(playlists) { p in
-                        Button { open(p) } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: "music.note.list")
-                                    .font(.system(size: 13))
-                                    .foregroundColor(ConsoleView.greenDeep)
-                                    .frame(width: 20)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(p.name).font(.system(size: Theme.F.body)).foregroundColor(Theme.textPrimary)
-                                    Text("\(p.count) 首").font(.system(size: Theme.F.caption)).foregroundColor(Theme.textMuted)
-                                }
-                                Spacer()
-                                Image(systemName: "chevron.right").font(.system(size: 10)).foregroundColor(Theme.textMuted)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .listRowBackground(Theme.mainBg)
-                    }
-                } header: {
-                    Text("\(s.nickname ?? "我")的歌单")
-                }
-            } else {
-                Text("音源没连上——网关登录态可能过期了，跟 Claude 说一声重新扫码。")
-                    .font(.system(size: Theme.F.caption))
-                    .foregroundColor(Theme.textMuted)
-                    .listRowBackground(Theme.mainBg)
+    private func loadingState(_ title: String) -> some View {
+        ProgressView(title).tint(ConsoleView.greenDeep)
+            .font(.subheadline).foregroundStyle(Theme.textMuted)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func messageState(_ title: String, detail: String, icon: String, retry: (() -> Void)? = nil) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: icon).font(.title2).foregroundStyle(ConsoleView.greenDeep)
+            Text(title).font(.headline).foregroundStyle(Theme.textPrimary)
+            Text(detail).font(.subheadline).foregroundStyle(Theme.textMuted).multilineTextAlignment(.center)
+            if let retry {
+                Button("重新试试", action: retry).buttonStyle(.bordered).tint(ConsoleView.greenDeep)
+                    .frame(minHeight: 44)
             }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
+        .padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func playlistGrid(_ catalogue: MusicLibraryBrowser.Catalogue) -> some View {
+        List {
+            Section {
+                ForEach(catalogue.playlists) { p in
+                    Button { searchText = ""; browser.open(p) } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "music.note.list")
+                                .font(.system(size: 13)).foregroundColor(ConsoleView.greenDeep).frame(width: 20)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(p.name).font(.system(size: Theme.F.body)).foregroundColor(Theme.textPrimary)
+                                Text("\(p.count) 首").font(.system(size: Theme.F.caption)).foregroundColor(Theme.textMuted)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.system(size: 10)).foregroundColor(Theme.textMuted)
+                        }
+                    }
+                    .buttonStyle(.plain).listRowBackground(Theme.mainBg)
+                }
+            } header: { Text("\(catalogue.status.nickname ?? "我")的歌单") }
+        }
+        .listStyle(.insetGrouped).scrollContentBackground(.hidden)
     }
 
     private func songList(_ songs: [MusicLibraryClient.RemoteSong], title: String?) -> some View {
@@ -111,16 +144,10 @@ struct CloudMusicView: View {
                 ForEach(songs) { s in
                     Button { playRemote(s, in: songs) } label: {
                         HStack(spacing: 10) {
-                            if loadingSongId == s.id {
-                                ProgressView().scaleEffect(0.6).frame(width: 18)
-                            } else {
-                                Image(systemName: player.currentSong?.title == s.title
-                                      ? (player.isPlaying ? "speaker.wave.2.fill" : "pause.fill") : "music.note")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(player.currentSong?.title == s.title
-                                                     ? ConsoleView.greenDeep : Theme.textMuted)
-                                    .frame(width: 18)
-                            }
+                            MusicArtwork(url: s.cover, size: 44)
+                                .overlay {
+                                    if loadingSongId == s.id { ProgressView().tint(ConsoleView.greenDeep) }
+                                }
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(s.title).font(.system(size: Theme.F.body))
                                     .foregroundColor(Theme.textPrimary).lineLimit(1)
@@ -128,6 +155,11 @@ struct CloudMusicView: View {
                                     .foregroundColor(Theme.textMuted).lineLimit(1)
                             }
                             Spacer()
+                            if player.currentSong?.remoteId == s.id {
+                                Image(systemName: player.isPlaying ? "speaker.wave.2.fill" : "pause.fill")
+                                    .foregroundStyle(ConsoleView.greenDeep)
+                                    .accessibilityLabel("当前歌曲")
+                            }
                         }
                     }
                     .buttonStyle(.plain)
@@ -146,25 +178,6 @@ struct CloudMusicView: View {
 
     // MARK: - 动作
 
-    private func runSearch() {
-        let q = searchText.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return }
-        loading = true
-        Task {
-            searchResults = await MusicLibraryClient.search(q)
-            loading = false
-        }
-    }
-
-    private func open(_ p: MusicLibraryClient.Playlist) {
-        loading = true
-        openedList = p
-        Task {
-            listSongs = await MusicLibraryClient.songs(inPlaylist: p.id)
-            loading = false
-        }
-    }
-
     /// 云端歌曲：现取直链和歌词 → 落成本地 Song（带 isRemote）→ 交给播放器
     /// 云端歌「下一首播放」：解析直链→建 Song（边听边存照旧）→插队；没在放歌就直接开播
     private func queueNext(r: MusicLibraryClient.RemoteSong) {
@@ -173,6 +186,7 @@ struct CloudMusicView: View {
             let song = Song(profileId: profileId, title: r.title, artist: r.artist, album: r.album,
                             source: url, isRemote: true, durationSec: Double(r.duration), lyrics: d.lyric)
             song.remoteId = r.id
+            song.artworkURL = r.cover
             context.insert(song)
             try? context.save()
             if let remote = URL(string: url) { MusicCache.store(songId: r.id, from: remote) }
@@ -191,6 +205,7 @@ struct CloudMusicView: View {
             let song = Song(profileId: profileId, title: r.title, artist: r.artist, album: r.album,
                             source: url, isRemote: true, durationSec: Double(r.duration), lyrics: d.lyric)
             song.remoteId = r.id
+            song.artworkURL = r.cover
             context.insert(song)
             try? context.save()
             // 边听边存，下次就是本地文件

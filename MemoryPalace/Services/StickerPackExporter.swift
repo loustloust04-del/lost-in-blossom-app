@@ -15,6 +15,7 @@ enum StickerPackExporter {
         let borderWidth: Double
         let noteContent: String?
         let noteStyle: String?
+        let noteFont: String?
         let tags: [String]
         let createdAt: Date
     }
@@ -31,6 +32,7 @@ enum StickerPackExporter {
         let zIndex: Int
         let noteContent: String?
         let noteStyle: String?
+        let noteFont: String?
         let placedAt: Date
     }
 
@@ -63,7 +65,7 @@ enum StickerPackExporter {
             AssetRecord(id: a.id.uuidString, name: a.name, assetType: a.assetType,
                        imagePath: a.imagePath, thumbnailPath: a.thumbnailPath,
                        borderStyle: a.borderStyle, borderWidth: a.borderWidth,
-                       noteContent: a.noteContent, noteStyle: a.noteStyle,
+                       noteContent: a.noteContent, noteStyle: a.noteStyle, noteFont: a.noteFont,
                        tags: a.tags, createdAt: a.createdAt)
         }
         let placementRecords = placed.map { s in
@@ -71,7 +73,7 @@ enum StickerPackExporter {
                           conversationId: s.conversationId, nearestMessageId: s.nearestMessageId,
                           positionX: s.positionX, positionY: s.positionY,
                           rotation: s.rotation, scale: s.scale, zIndex: s.zIndex,
-                          noteContent: s.noteContent, noteStyle: s.noteStyle,
+                          noteContent: s.noteContent, noteStyle: s.noteStyle, noteFont: s.noteFont,
                           placedAt: s.placedAt)
         }
 

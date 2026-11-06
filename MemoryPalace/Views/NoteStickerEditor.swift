@@ -39,8 +39,9 @@ enum NoteStyle: String, CaseIterable {
 struct NoteStickerEditor: View {
     var initialText: String = ""
     var initialStyle: NoteStyle = .yellowSquare
+    var initialFont: String = "system"
     var isEditMode: Bool = false
-    let onConfirm: (String, NoteStyle) -> Void
+    let onConfirm: (String, NoteStyle, String) -> Void
     @Environment(\.dismiss) private var dismiss
 
     @State private var text = ""
@@ -144,24 +145,21 @@ struct NoteStickerEditor: View {
             if isEditMode {
                 text = initialText
                 selectedStyle = initialStyle
+                selectedFont = initialFont
             }
             isFocused = true
         }
     }
 
     private var noteFont: Font {
-        switch selectedFont {
-        case "Noteworthy": return .custom("Noteworthy", size: 14)
-        case "Marker Felt": return .custom("Marker Felt", size: 14)
-        case "American Typewriter": return .custom("American Typewriter", size: 13)
-        default: return .system(size: 13)
-        }
+        let size: CGFloat = ["Noteworthy", "Marker Felt"].contains(selectedFont) ? 14 : 13
+        return NoteStickerFont.font(selectedFont, size: size)
     }
 
     private func confirm() {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        onConfirm(trimmed, selectedStyle)
+        onConfirm(trimmed, selectedStyle, selectedFont)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             dismiss()
         }

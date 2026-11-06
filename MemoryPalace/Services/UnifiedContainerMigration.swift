@@ -332,6 +332,7 @@ enum UnifiedContainerMigration {
             new.filterStyle = old.filterStyle
             new.noteContent = old.noteContent
             new.noteStyle = old.noteStyle
+            new.noteFont = old.noteFont
             new.createdAt = old.createdAt
             unifiedCtx.insert(new)
         }
@@ -353,6 +354,7 @@ enum UnifiedContainerMigration {
                 zIndex: old.zIndex,
                 noteContent: old.noteContent,
                 noteStyle: old.noteStyle,
+                noteFont: old.noteFont,
                 profileId: profile.id
             )
             new.id = old.id

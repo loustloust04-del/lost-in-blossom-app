@@ -56,7 +56,7 @@ enum SaveFailureReporter {
 
         // 上报服务器（失败就算了，本地那份还在）
         let base = UserDefaults.standard.string(forKey: "gatewayBaseURL") ?? "https://blossom.amberrib.com"
-        guard let url = URL(string: "\(base)/api/save-failure?key=bunny-lib-2026") else { return }
+        guard let url = URL(string: "\(base)/api/save-failure?key=\(GatewayKey.query)") else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")

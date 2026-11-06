@@ -21,7 +21,7 @@ enum WishClient {
 
     /// 只拉远端（缓存流程见 listCached）
     private static func fetchRemote() async -> [Wish]? {
-        guard let url = URL(string: "\(base)/api/intimacy/wishes?key=bunny-lib-2026") else { return nil }
+        guard let url = URL(string: "\(base)/api/intimacy/wishes?key=\(GatewayKey.query)") else { return nil }
         var req = URLRequest(url: url); req.timeoutInterval = 10
         guard let (d, _) = try? await URLSession.shared.data(for: req),
               let w = try? JSONDecoder().decode(Wrap.self, from: d) else { return nil }
@@ -40,7 +40,7 @@ enum WishClient {
 
     @discardableResult
     private static func post(_ body: [String: Any]) async -> [Wish] {
-        guard let url = URL(string: "\(base)/api/intimacy/wishes?key=bunny-lib-2026") else { return [] }
+        guard let url = URL(string: "\(base)/api/intimacy/wishes?key=\(GatewayKey.query)") else { return [] }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")

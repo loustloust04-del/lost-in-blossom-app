@@ -22,6 +22,8 @@ final class StickerAsset {
     var noteContent: String?                // 便签文字
     var noteStyle: String?                  // "yellow_square", "pink_rounded", "glass", "torn_paper"
 
+    var noteFont: String?              // nil = 默认字体（兼容旧便签）
+
     var tags: [String] = []
     var createdAt: Date = Date()
     var profileId: String = ""              // 楼层隔离
@@ -54,6 +56,7 @@ final class StickerAsset {
     init(
         noteContent: String,
         noteStyle: String,
+        noteFont: String? = nil,
         name: String = "",
         tags: [String] = [],
         profileId: String
@@ -62,6 +65,7 @@ final class StickerAsset {
         self.name = name.isEmpty ? String(noteContent.prefix(10)) : name
         self.noteContent = noteContent
         self.noteStyle = noteStyle
+        self.noteFont = noteFont
         self.tags = tags
         self.profileId = profileId
     }

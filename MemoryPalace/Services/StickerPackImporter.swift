@@ -57,6 +57,7 @@ enum StickerPackImporter {
                 let asset = StickerAsset(
                     noteContent: record.noteContent ?? "",
                     noteStyle: record.noteStyle ?? "yellow_square",
+                    noteFont: record.noteFont,
                     name: record.name,
                     tags: record.tags,
                     profileId: profileId
@@ -110,6 +111,7 @@ enum StickerPackImporter {
                 zIndex: record.zIndex,
                 noteContent: record.noteContent,
                 noteStyle: record.noteStyle,
+                noteFont: record.noteFont,
                 profileId: profileId
             )
             context.insert(sticker)
